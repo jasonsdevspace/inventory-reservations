@@ -2,7 +2,14 @@ import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, createPool } from './pool.js';
 import { createStore, type Strategy } from './store.js';
-import { prewarmPool, readState, resetDatabase, resultOf, seedStock } from './testkit.js';
+import {
+    prewarmPool,
+    readState,
+    resetDatabase,
+    resultOf,
+    seedMerchant,
+    seedStock,
+} from './testkit.js';
 import type { OversellPolicy } from '../domain/types.js';
 
 /*
@@ -14,6 +21,7 @@ import type { OversellPolicy } from '../domain/types.js';
  */
 
 const sku = 'WIDGET-1';
+const merchantId = 'test-merchant';
 const strict: OversellPolicy = { kind: 'strict' };
 let pool: pg.Pool;
 
@@ -31,27 +39,28 @@ afterAll(async () => {
 
 beforeEach(async () => {
     await resetDatabase(pool);
-    await seedStock(pool, sku, 10);
+    await seedMerchant(pool, merchantId);
+    await seedStock(pool, merchantId, sku, 10);
 });
 
 describe('the ledger through Postgres', () => {
     it('commits stock without moving it', async () => {
         const store = createStore(pool, 'row_lock');
         const result = resultOf(
-            await store.placeOrder({ sku, orderId: 'o-1', quantity: 3 }, strict)
+            await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict)
         );
 
         expect(result.ok).toBe(true);
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state).toMatchObject({ physical: 10, net: -3, salable: 7 });
     });
 
     it('leaves salable quantity unchanged when the order ships', async () => {
         const store = createStore(pool, 'row_lock');
-        await store.placeOrder({ sku, orderId: 'o-1', quantity: 3 }, strict);
-        await store.shipOrder({ sku, orderId: 'o-1', quantity: 3 });
+        await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict);
+        await store.shipOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 });
 
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state).toMatchObject({ physical: 7, net: 0, salable: 7 });
         expect(state.entries.map((entry) => entry.reason)).toEqual([
             'order_placed',
@@ -61,24 +70,24 @@ describe('the ledger through Postgres', () => {
 
     it('returns stock to the shelf when the order is cancelled', async () => {
         const store = createStore(pool, 'row_lock');
-        await store.placeOrder({ sku, orderId: 'o-1', quantity: 3 }, strict);
-        await store.cancelOrder({ sku, orderId: 'o-1', quantity: 3 });
+        await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict);
+        await store.cancelOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 });
 
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state).toMatchObject({ physical: 10, net: 0, salable: 10 });
     });
 
     it('refuses an order larger than what is salable, without writing anything', async () => {
         const store = createStore(pool, 'row_lock');
         const result = resultOf(
-            await store.placeOrder({ sku, orderId: 'o-1', quantity: 11 }, strict)
+            await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 11 }, strict)
         );
 
         expect(result).toEqual({
             ok: false,
             rejection: { kind: 'insufficient_salable', requested: 11, available: 10 },
         });
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state.entries).toHaveLength(0);
     });
 });
@@ -86,7 +95,7 @@ describe('the ledger through Postgres', () => {
 describe('the ledger is append only in the database, not only by convention', () => {
     beforeEach(async () => {
         const store = createStore(pool, 'row_lock');
-        await store.placeOrder({ sku, orderId: 'o-1', quantity: 1 }, strict);
+        await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 1 }, strict);
     });
 
     it('refuses an update', async () => {
@@ -115,7 +124,8 @@ describe('without a concurrency control the ledger records an oversell', () => {
      */
     it('lets two interleaved transactions both commit against one unit', async () => {
         await resetDatabase(pool);
-        await seedStock(pool, sku, 1);
+        await seedMerchant(pool, merchantId);
+        await seedStock(pool, merchantId, sku, 1);
 
         const first = await pool.connect();
         const second = await pool.connect();
@@ -124,20 +134,20 @@ describe('without a concurrency control the ledger records an oversell', () => {
             await second.query('begin');
 
             const firstRead = await first.query<{ physical: number }>(
-                'select physical from stock where sku = $1',
-                [sku]
+                'select physical from stock where merchant_id = $1 and sku = $2',
+                [merchantId, sku]
             );
             const secondRead = await second.query<{ physical: number }>(
-                'select physical from stock where sku = $1',
-                [sku]
+                'select physical from stock where merchant_id = $1 and sku = $2',
+                [merchantId, sku]
             );
             expect(firstRead.rows[0]?.physical).toBe(1);
             expect(secondRead.rows[0]?.physical).toBe(1);
 
-            const insert =
-                'insert into reservations (sku, order_id, quantity, reason) values ($1, $2, -1, $3)';
-            await first.query(insert, [sku, 'o-1', 'order_placed']);
-            await second.query(insert, [sku, 'o-2', 'order_placed']);
+            const insert = `insert into reservations (merchant_id, sku, order_id, quantity, reason)
+                 values ($1, $2, $3, -1, $4)`;
+            await first.query(insert, [merchantId, sku, 'o-1', 'order_placed']);
+            await second.query(insert, [merchantId, sku, 'o-2', 'order_placed']);
             await first.query('commit');
             await second.query('commit');
         } finally {
@@ -145,7 +155,7 @@ describe('without a concurrency control the ledger records an oversell', () => {
             second.release();
         }
 
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state.net).toBe(-2);
         expect(state.salable).toBe(-1);
     });
@@ -167,14 +177,18 @@ describe('the harness genuinely contends', () => {
      */
     it('oversells badly with no concurrency control', async () => {
         await resetDatabase(pool);
-        await seedStock(pool, sku, 1);
+        await seedMerchant(pool, merchantId);
+        await seedStock(pool, merchantId, sku, 1);
         await prewarmPool(pool, CONTENDERS);
 
         const store = createStore(pool, 'none');
         const results = (
             await Promise.all(
                 Array.from({ length: CONTENDERS }, (_, index) =>
-                    store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
+                    store.placeOrder(
+                        { merchantId, sku, orderId: `o-${index}`, quantity: 1 },
+                        strict
+                    )
                 )
             )
         ).map(resultOf);
@@ -182,7 +196,7 @@ describe('the harness genuinely contends', () => {
         const accepted = results.filter((result) => result.ok).length;
         expect(accepted).toBeGreaterThan(1);
 
-        const state = await readState(pool, sku);
+        const state = await readState(pool, merchantId, sku);
         expect(state.net).toBe(-accepted);
         expect(state.salable).toBeLessThan(0);
     });
@@ -193,14 +207,15 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
     (strategy) => {
         beforeEach(async () => {
             await resetDatabase(pool);
-            await seedStock(pool, sku, 1);
+            await seedMerchant(pool, merchantId);
+            await seedStock(pool, merchantId, sku, 1);
             await prewarmPool(pool, CONTENDERS);
         });
 
         it(`admits one of ${CONTENDERS} simultaneous orders and refuses the rest`, async () => {
             const store = createStore(pool, strategy);
             const attempts = Array.from({ length: CONTENDERS }, (_, index) =>
-                store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
+                store.placeOrder({ merchantId, sku, orderId: `o-${index}`, quantity: 1 }, strict)
             );
 
             const results = (await Promise.all(attempts)).map(resultOf);
@@ -215,7 +230,7 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
                 expect(result.rejection.kind).toBe('insufficient_salable');
             });
 
-            const state = await readState(pool, sku);
+            const state = await readState(pool, merchantId, sku);
             expect(state.net).toBe(-1);
             expect(state.salable).toBe(0);
             expect(state.entries).toHaveLength(1);
@@ -223,22 +238,26 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
 
         it('keeps the ledger consistent when orders and cancellations race', async () => {
             await resetDatabase(pool);
-            await seedStock(pool, sku, 5);
+            await seedMerchant(pool, merchantId);
+            await seedStock(pool, merchantId, sku, 5);
             await prewarmPool(pool, 10);
             const store = createStore(pool, strategy);
 
             await Promise.all(
                 Array.from({ length: 5 }, (_, index) =>
-                    store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
+                    store.placeOrder(
+                        { merchantId, sku, orderId: `o-${index}`, quantity: 1 },
+                        strict
+                    )
                 )
             );
             await Promise.all(
                 Array.from({ length: 5 }, (_, index) =>
-                    store.cancelOrder({ sku, orderId: `o-${index}`, quantity: 1 })
+                    store.cancelOrder({ merchantId, sku, orderId: `o-${index}`, quantity: 1 })
                 )
             );
 
-            const state = await readState(pool, sku);
+            const state = await readState(pool, merchantId, sku);
             expect(state.net).toBe(0);
             expect(state.physical).toBe(5);
             expect(state.salable).toBe(5);
