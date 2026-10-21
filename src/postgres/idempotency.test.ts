@@ -1,14 +1,22 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { hashRequest, purgeExpiredKeys } from './idempotency.js';
-import { applySchema, createPool } from './pool.js';
+import { createAppPool, createOwnerPool } from './pool.js';
 import { createStore } from './store.js';
-import { prewarmPool, readState, resetDatabase, seedMerchant, seedStock } from './testkit.js';
+import {
+    prepareDatabase,
+    prewarmPool,
+    readState,
+    resetDatabase,
+    seedMerchant,
+    seedStock,
+} from './testkit.js';
 import type { OversellPolicy } from '../domain/types.js';
 
 const sku = 'WIDGET-1';
 const merchantId = 'test-merchant';
 const strict: OversellPolicy = { kind: 'strict' };
+let owner: pg.Pool;
 let pool: pg.Pool;
 
 const context = (key: string, payload: Record<string, unknown>) => ({
@@ -19,18 +27,20 @@ const context = (key: string, payload: Record<string, unknown>) => ({
 });
 
 beforeAll(async () => {
-    pool = createPool({ max: 20 });
-    await applySchema(pool);
+    owner = createOwnerPool({ max: 5 });
+    await prepareDatabase(owner);
+    pool = createAppPool({ max: 20 });
 });
 
 afterAll(async () => {
     await pool.end();
+    await owner.end();
 });
 
 beforeEach(async () => {
-    await resetDatabase(pool);
-    await seedMerchant(pool, merchantId);
-    await seedStock(pool, merchantId, sku, 10);
+    await resetDatabase(owner);
+    await seedMerchant(owner, merchantId);
+    await seedStock(owner, merchantId, sku, 10);
 });
 
 describe('idempotency', () => {
@@ -41,7 +51,7 @@ describe('idempotency', () => {
         const outcome = await store.placeOrder(order, strict, context('k-1', order));
 
         expect(outcome.kind).toBe('applied');
-        expect((await readState(pool, merchantId, sku)).net).toBe(-3);
+        expect((await readState(owner, merchantId, sku)).net).toBe(-3);
     });
 
     it('replays the same key rather than placing a second order', async () => {
@@ -53,7 +63,7 @@ describe('idempotency', () => {
         if (second.kind !== 'replayed') return;
         expect(second.result.ok).toBe(true);
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state.net).toBe(-3);
         expect(state.entries).toHaveLength(1);
     });
@@ -67,7 +77,7 @@ describe('idempotency', () => {
             context('k-2', { ...order, orderId: 'o-2' })
         );
 
-        expect((await readState(pool, merchantId, sku)).entries).toHaveLength(2);
+        expect((await readState(owner, merchantId, sku)).entries).toHaveLength(2);
     });
 
     it('refuses a key reused with different arguments', async () => {
@@ -80,7 +90,7 @@ describe('idempotency', () => {
         );
 
         expect(reused.kind).toBe('key_reused');
-        expect((await readState(pool, merchantId, sku)).entries).toHaveLength(1);
+        expect((await readState(owner, merchantId, sku)).entries).toHaveLength(1);
     });
 
     it('is not confused by key order in the request fingerprint', () => {
@@ -101,7 +111,7 @@ describe('idempotency', () => {
         if (first.kind !== 'applied') return;
         expect(first.result.ok).toBe(false);
 
-        await pool.query('update stock set physical = 500 where merchant_id = $1 and sku = $2', [
+        await owner.query('update stock set physical = 500 where merchant_id = $1 and sku = $2', [
             merchantId,
             sku,
         ]);
@@ -110,7 +120,7 @@ describe('idempotency', () => {
         expect(retry.kind).toBe('replayed');
         if (retry.kind !== 'replayed') return;
         expect(retry.result.ok).toBe(false);
-        expect((await readState(pool, merchantId, sku)).entries).toHaveLength(0);
+        expect((await readState(owner, merchantId, sku)).entries).toHaveLength(0);
     });
 
     it('admits one of several simultaneous duplicates and no more', async () => {
@@ -137,7 +147,7 @@ describe('idempotency', () => {
                 expect(['replayed', 'in_flight']).toContain(outcome.kind);
             });
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state.net).toBe(-3);
         expect(state.entries).toHaveLength(1);
     });
@@ -149,16 +159,16 @@ describe('key retention', () => {
         const order = { merchantId, sku, orderId: 'o-1', quantity: 1 };
         await store.placeOrder(order, strict, context('fresh', order));
 
-        await pool.query(
+        await owner.query(
             `insert into idempotency_keys (merchant_id, key, endpoint, request_hash, created_at)
              values ($1, 'stale', 'place', 'hash', now() - interval '48 hours')`,
             [merchantId]
         );
 
-        const purged = await purgeExpiredKeys(pool, '24 hours');
+        const purged = await purgeExpiredKeys(owner, '24 hours');
         expect(purged).toBe(1);
 
-        const { rows } = await pool.query<{ key: string }>('select key from idempotency_keys');
+        const { rows } = await owner.query<{ key: string }>('select key from idempotency_keys');
         expect(rows.map((row) => row.key)).toEqual(['fresh']);
     });
 });

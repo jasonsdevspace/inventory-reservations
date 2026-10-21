@@ -80,11 +80,19 @@ export interface ExistingKey {
     readonly result: unknown | null;
 }
 
+/**
+ * Looks up a key that has already been claimed.
+ *
+ * Takes a client rather than a pool, because this has to run inside a
+ * transaction that has declared its tenant. Issued outside one it sees no rows
+ * under row level security, and every duplicate would be told the original was
+ * still in flight rather than being handed its answer.
+ */
 export const readKey = async (
-    pool: pg.Pool,
+    client: pg.PoolClient,
     context: IdempotencyContext
 ): Promise<ExistingKey | null> => {
-    const { rows } = await pool.query<{ request_hash: string; result: unknown | null }>(
+    const { rows } = await client.query<{ request_hash: string; result: unknown | null }>(
         `select request_hash, result from idempotency_keys
          where merchant_id = $1 and key = $2 and endpoint = $3`,
         [context.merchantId, context.key, context.endpoint]
@@ -97,9 +105,13 @@ export const readKey = async (
  * Removes keys older than the retention window.
  *
  * Keys are only useful for as long as a client might still retry, and keeping
- * them beyond that turns a correctness mechanism into an unbounded table. A
- * deployment runs this on a schedule. The window is a parameter because the
- * right value depends on how long the callers in front of it keep retrying.
+ * them beyond that turns a correctness mechanism into an unbounded table.
+ *
+ * Runs as the owner, not as the service. The application role has no delete
+ * privilege anywhere, deliberately, so retention is a maintenance task on a
+ * schedule rather than something a request handler could be talked into
+ * triggering. The window is a parameter because the right value depends on how
+ * long the callers in front of it keep retrying.
  */
 export const purgeExpiredKeys = async (pool: pg.Pool, olderThan: string): Promise<number> => {
     const { rowCount } = await pool.query(

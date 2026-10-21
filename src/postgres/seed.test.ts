@@ -1,29 +1,32 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { applySchema, createPool } from './pool.js';
+import { createAppPool, createOwnerPool } from './pool.js';
 import { DEMO_STOCK, seedDemoStock } from './seed.js';
-import { readState, resetDatabase } from './testkit.js';
+import { prepareDatabase, readState, resetDatabase } from './testkit.js';
 
+let owner: pg.Pool;
 let pool: pg.Pool;
 
 beforeAll(async () => {
-    pool = createPool({ max: 5 });
-    await applySchema(pool);
+    owner = createOwnerPool({ max: 5 });
+    await prepareDatabase(owner);
+    pool = createAppPool({ max: 5 });
 });
 
 afterAll(async () => {
     await pool.end();
+    await owner.end();
 });
 
 beforeEach(async () => {
-    await resetDatabase(pool);
+    await resetDatabase(owner);
 });
 
 describe('demo stock', () => {
     it('owns the same SKU for two merchants at different quantities', async () => {
-        await seedDemoStock(pool);
-        const acme = await readState(pool, 'acme', 'DEMO-1');
-        const globex = await readState(pool, 'globex', 'DEMO-1');
+        await seedDemoStock(owner);
+        const acme = await readState(owner, 'acme', 'DEMO-1');
+        const globex = await readState(owner, 'globex', 'DEMO-1');
 
         // The same name, two owners, two different stock levels. Inventory
         // belongs to somebody.
@@ -32,8 +35,8 @@ describe('demo stock', () => {
     });
 
     it('gives a clean database something to query', async () => {
-        await seedDemoStock(pool);
-        const { rows } = await pool.query<{ merchant_id: string; sku: string }>(
+        await seedDemoStock(owner);
+        const { rows } = await owner.query<{ merchant_id: string; sku: string }>(
             'select merchant_id, sku from stock order by merchant_id, sku'
         );
         expect(rows.map((row) => `${row.merchant_id}/${row.sku}`).sort()).toEqual(
@@ -42,8 +45,8 @@ describe('demo stock', () => {
     });
 
     it('shows the three quantities differing on the very first request', async () => {
-        await seedDemoStock(pool);
-        const state = await readState(pool, 'acme', 'DEMO-COMMITTED');
+        await seedDemoStock(owner);
+        const state = await readState(owner, 'acme', 'DEMO-COMMITTED');
 
         // Ten on hand, three committed, seven to sell. The worked example from
         // the README, true before anybody has done anything.
@@ -51,27 +54,27 @@ describe('demo stock', () => {
     });
 
     it('does not commit the demo order again when the service restarts', async () => {
-        await seedDemoStock(pool);
-        await seedDemoStock(pool);
-        await seedDemoStock(pool);
+        await seedDemoStock(owner);
+        await seedDemoStock(owner);
+        await seedDemoStock(owner);
 
-        const state = await readState(pool, 'acme', 'DEMO-COMMITTED');
+        const state = await readState(owner, 'acme', 'DEMO-COMMITTED');
         expect(state.net).toBe(-3);
         expect(state.entries).toHaveLength(1);
     });
 
     it('leaves existing stock alone when the service restarts', async () => {
-        await seedDemoStock(pool);
+        await seedDemoStock(owner);
         const first = DEMO_STOCK[0];
         if (!first) throw new Error('demo stock is empty');
 
-        await pool.query('update stock set physical = 42 where merchant_id = $1 and sku = $2', [
+        await owner.query('update stock set physical = 42 where merchant_id = $1 and sku = $2', [
             first.merchantId,
             first.sku,
         ]);
-        await seedDemoStock(pool);
+        await seedDemoStock(owner);
 
-        const { rows } = await pool.query<{ physical: number }>(
+        const { rows } = await owner.query<{ physical: number }>(
             'select physical from stock where merchant_id = $1 and sku = $2',
             [first.merchantId, first.sku]
         );

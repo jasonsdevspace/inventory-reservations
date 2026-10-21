@@ -347,6 +347,69 @@ service, so a developer who has run compose needs no configuration at all.
 such as `TODO` markers or notes about pending decisions. Comments here explain why the code is the
 way it is. They do not track what is undone.
 
+## What the service is allowed to do
+
+The application connects as a role that cannot drop a table, cannot run DDL, and **cannot delete
+anything anywhere**.
+
+| Table              | Application role may         |
+| ------------------ | ---------------------------- |
+| `merchants`        | `select`                     |
+| `stock`            | `select`, `update`           |
+| `reservations`     | `select`, `insert`           |
+| `idempotency_keys` | `select`, `insert`, `update` |
+
+That turns the append only property from a promise into a privilege. The trigger enforcing it is
+installed by the owner and cannot be dropped by the role whose appends it governs. Retention,
+which deletes expired idempotency keys, runs as the owner on a schedule rather than being
+something a request handler could be talked into triggering.
+
+Migrations are a deployment step, not something the service does to itself on startup. A service
+that migrates itself is a service whose runtime credentials can drop its tables.
+
+Timeouts belong to the role, so every session gets them without the application having to
+remember:
+
+```
+statement_timeout = 5s
+lock_timeout = 3s
+idle_in_transaction_session_timeout = 10s
+```
+
+`lock_timeout` matters most. The row lock strategy queues placements for a SKU behind each other,
+and an unbounded wait turns a busy product into a hung request.
+
+## Row level security
+
+Every query the service issues is already scoped by merchant. This is the answer to what happens
+when one is not, through a bug, a refactor, or a query somebody adds in a hurry.
+
+```sql
+create policy stock_tenant_isolation on stock
+    using (merchant_id = current_setting('app.merchant_id', true))
+    with check (merchant_id = current_setting('app.merchant_id', true));
+```
+
+The merchant is read from a setting the application writes with `set_local` inside each
+transaction. `set_local` rather than `set`, because connections are pooled and reused: a session
+level setting outlives the request that made it and hands the next caller the previous caller's
+tenancy.
+
+A query that forgets its `where` clause returns one merchant's rows rather than everybody's. A
+query issued outside a transaction has no tenancy and returns nothing at all, which is the right
+way for it to fail. Writing a row belonging to another merchant is refused by the policy rather
+than by a code review.
+
+### This found a real bug
+
+Turning the policies on broke the idempotency replay path, and it deserved to.
+
+The lookup that decides whether a duplicate request should be replayed ran outside a transaction,
+so under row level security it had no tenancy and found nothing. Every duplicate would have been
+told the original was still in flight, forever, instead of being handed its answer. The tests that
+caught it were passing happily the day before, because without policies an unscoped read quietly
+worked.
+
 ## The container
 
 Multi-stage, ending on `gcr.io/distroless/nodejs24-debian12`. The final image has no shell, no

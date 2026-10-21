@@ -1,5 +1,4 @@
-import { applySchema, createPool } from '../postgres/pool.js';
-import { seedDemoStock } from '../postgres/seed.js';
+import { createAppPool } from '../postgres/pool.js';
 import type { Strategy } from '../postgres/store.js';
 import { parsePolicy } from './policy.js';
 import { createServer } from './server.js';
@@ -7,19 +6,18 @@ import { createServer } from './server.js';
 /**
  * Entry point for the container.
  *
- * Reads its configuration from the environment and nothing else, so the same
- * image runs locally and in production with no rebuild.
+ * The service connects as the application role, which has no DDL rights, so it
+ * cannot create its own schema and does not try. Migrations are a deployment
+ * step run by the owner. A service that migrates itself is a service whose
+ * database credentials can drop its tables.
+ *
+ * Configuration comes from the environment and nowhere else, so the same image
+ * runs locally and in production with no rebuild.
  */
 const strategy = (process.env.CONCURRENCY_STRATEGY ?? 'row_lock') as Strategy;
 const port = Number(process.env.PORT ?? 8080);
 
-const pool = createPool();
-await applySchema(pool);
-
-// Compose sets this so a reader has something to query the moment the service
-// is up. Production leaves it unset.
-if (process.env.SEED_DEMO === 'true') await seedDemoStock(pool);
-
+const pool = createAppPool();
 const app = createServer({ pool, strategy, policy: parsePolicy(process.env.OVERSELL_POLICY) });
 
 // Containers are stopped with a signal, and a connection pool that is not

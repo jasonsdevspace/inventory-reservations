@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
 import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
+import { withTenant } from '../postgres/pool.js';
 import { createStore, type Outcome, type Strategy } from '../postgres/store.js';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
 import type { LedgerEntry, OversellPolicy, Rejection } from '../domain/types.js';
@@ -179,20 +180,29 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
     app.get<{ Params: { sku: string } }>('/inventory/:sku', async (request, response) => {
         const { sku } = request.params;
         const merchantId = request.merchant.id;
-        const stock = await pool.query<{ physical: number }>(
-            'select physical from stock where merchant_id = $1 and sku = $2',
-            [merchantId, sku]
-        );
-        const physical = stock.rows[0]?.physical;
+
+        // Read inside a transaction that declares its tenant, because row
+        // level security takes the merchant from a transaction local setting.
+        // A query issued outside one has no tenancy and finds nothing, which
+        // is the right way for it to fail.
+        const { physical, entries } = await withTenant(pool, merchantId, async (client) => {
+            const stock = await client.query<{ physical: number }>(
+                'select physical from stock where merchant_id = $1 and sku = $2',
+                [merchantId, sku]
+            );
+            const ledger = await client.query<{ quantity: number }>(
+                'select quantity from reservations where merchant_id = $1 and sku = $2',
+                [merchantId, sku]
+            );
+            return {
+                physical: stock.rows[0]?.physical,
+                entries: ledger.rows as Pick<LedgerEntry, 'quantity'>[] as LedgerEntry[],
+            };
+        });
+
         if (physical === undefined) {
             return response.status(404).send({ error: { kind: 'unknown_sku', sku } });
         }
-
-        const ledger = await pool.query<{ quantity: number }>(
-            'select quantity from reservations where merchant_id = $1 and sku = $2',
-            [merchantId, sku]
-        );
-        const entries = ledger.rows as Pick<LedgerEntry, 'quantity'>[] as LedgerEntry[];
         return response.send({
             sku,
             physical,
