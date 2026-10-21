@@ -220,10 +220,30 @@ Requires Docker. Node 24 as well if you want to run the test suite.
 
 ```bash
 docker compose up -d --build   # the API on :8080 and Postgres behind it
-curl localhost:8080/health
+curl localhost:8080/inventory/DEMO-1
 ```
 
 That is the whole setup. No local Node, no local Postgres.
+
+Compose seeds three SKUs so there is something to try immediately: `DEMO-1` with five units,
+`DEMO-SCARCE` with one, and `DEMO-PLENTIFUL` with five hundred. `DEMO-SCARCE` is the interesting
+one, because it is the last unit two people are about to want.
+
+```bash
+# commit two of the five
+curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
+  -H 'idempotency-key: try-1' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
+
+# send it again, and nothing happens twice
+curl -isX POST localhost:8080/orders -H 'content-type: application/json' \
+  -H 'idempotency-key: try-1' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | head -1
+
+# ask for more than is there
+curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
+  -d '{"sku":"DEMO-SCARCE","orderId":"o-2","quantity":4}'
+```
+
+Seeding is behind `SEED_DEMO`, which compose sets and production leaves unset.
 
 To work on it:
 
