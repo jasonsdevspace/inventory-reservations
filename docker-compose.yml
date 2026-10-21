@@ -7,6 +7,25 @@
 #   docker compose up -d
 #   npm run verify
 services:
+    # The service itself, built from the Dockerfile in this directory.
+    #
+    # Running `docker compose up` gives a developer the API and its database
+    # with no local Node or Postgres installed. The test suite talks to the
+    # database directly and does not need this service, so it is here for
+    # trying the thing rather than for the suite.
+    api:
+        build: .
+        environment:
+            DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
+            PORT: 8080
+            CONCURRENCY_STRATEGY: row_lock
+            OVERSELL_POLICY: strict
+        ports:
+            - '8080:8080'
+        depends_on:
+            postgres:
+                condition: service_healthy
+
     postgres:
         image: postgres:18-alpine
         environment:

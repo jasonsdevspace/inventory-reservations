@@ -44,3 +44,26 @@ drop trigger if exists reservations_no_update on reservations;
 create trigger reservations_no_update
 before update or delete on reservations
 for each row execute function reservations_are_append_only();
+
+-- Idempotency keys.
+--
+-- A client that retries a request after a timeout must not place a second
+-- order. The key is supplied by the caller and scoped per endpoint, so the
+-- same key on `place` and on `cancel` are different keys and cannot collide.
+--
+-- `request_hash` is kept so a key reused with different arguments can be
+-- rejected rather than silently replaying an answer to a question nobody
+-- asked. `result` is null while the request is still in flight, which is how a
+-- concurrent duplicate is told to try again rather than being handed a
+-- half-finished answer.
+create table if not exists idempotency_keys (
+    key text not null,
+    endpoint text not null,
+    request_hash text not null,
+    result jsonb,
+    created_at timestamptz not null default now(),
+    primary key (key, endpoint)
+);
+
+-- Keys are purged on age, so the index serves the only query that sweeps them.
+create index if not exists idempotency_keys_created_at_idx on idempotency_keys (created_at);

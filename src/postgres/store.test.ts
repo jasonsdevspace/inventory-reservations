@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, createPool } from './pool.js';
 import { createStore, type Strategy } from './store.js';
-import { prewarmPool, readState, resetDatabase, seedStock } from './testkit.js';
+import { prewarmPool, readState, resetDatabase, resultOf, seedStock } from './testkit.js';
 import type { OversellPolicy } from '../domain/types.js';
 
 /*
@@ -37,7 +37,9 @@ beforeEach(async () => {
 describe('the ledger through Postgres', () => {
     it('commits stock without moving it', async () => {
         const store = createStore(pool, 'row_lock');
-        const result = await store.placeOrder({ sku, orderId: 'o-1', quantity: 3 }, strict);
+        const result = resultOf(
+            await store.placeOrder({ sku, orderId: 'o-1', quantity: 3 }, strict)
+        );
 
         expect(result.ok).toBe(true);
         const state = await readState(pool, sku);
@@ -68,7 +70,9 @@ describe('the ledger through Postgres', () => {
 
     it('refuses an order larger than what is salable, without writing anything', async () => {
         const store = createStore(pool, 'row_lock');
-        const result = await store.placeOrder({ sku, orderId: 'o-1', quantity: 11 }, strict);
+        const result = resultOf(
+            await store.placeOrder({ sku, orderId: 'o-1', quantity: 11 }, strict)
+        );
 
         expect(result).toEqual({
             ok: false,
@@ -167,11 +171,13 @@ describe('the harness genuinely contends', () => {
         await prewarmPool(pool, CONTENDERS);
 
         const store = createStore(pool, 'none');
-        const results = await Promise.all(
-            Array.from({ length: CONTENDERS }, (_, index) =>
-                store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
+        const results = (
+            await Promise.all(
+                Array.from({ length: CONTENDERS }, (_, index) =>
+                    store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
+                )
             )
-        );
+        ).map(resultOf);
 
         const accepted = results.filter((result) => result.ok).length;
         expect(accepted).toBeGreaterThan(1);
@@ -197,7 +203,7 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
                 store.placeOrder({ sku, orderId: `o-${index}`, quantity: 1 }, strict)
             );
 
-            const results = await Promise.all(attempts);
+            const results = (await Promise.all(attempts)).map(resultOf);
             const accepted = results.filter((result) => result.ok);
             const refused = results.filter((result) => !result.ok);
 

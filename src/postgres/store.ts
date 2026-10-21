@@ -1,6 +1,13 @@
 import type pg from 'pg';
 import { cancelOrder, placeOrder, shipOrder } from '../domain/commands.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../domain/types.js';
+import {
+    claimKey,
+    readKey,
+    recordResult,
+    UNIQUE_VIOLATION,
+    type IdempotencyContext,
+} from './idempotency.js';
 
 /**
  * How the order boundary is protected.
@@ -34,6 +41,23 @@ interface Command {
     readonly orderId: string;
     readonly quantity: number;
 }
+
+/**
+ * What came of a request.
+ *
+ * `applied` and `replayed` both carry a result and differ only in whether the
+ * work happened now or earlier. Callers that need to tell a client which one
+ * it was can, and callers that do not can ignore the distinction.
+ *
+ * `in_flight` means a duplicate arrived while the original is still running.
+ * `key_reused` means the same key arrived with different arguments, which is a
+ * client bug worth surfacing rather than papering over.
+ */
+export type Outcome =
+    | { readonly kind: 'applied'; readonly result: CommandResult }
+    | { readonly kind: 'replayed'; readonly result: CommandResult }
+    | { readonly kind: 'in_flight' }
+    | { readonly kind: 'key_reused' };
 
 const readStock = async (client: pg.PoolClient, sku: string, lock: boolean): Promise<Stock> => {
     const { rows } = await client.query<{ sku: string; physical: number }>(
@@ -83,11 +107,33 @@ const applyPhysicalDelta = async (
     await client.query('update stock set physical = physical + $2 where sku = $1', [sku, delta]);
 };
 
+const errorCode = (error: unknown): string | undefined =>
+    typeof error === 'object' && error !== null && 'code' in error
+        ? (error as { code?: string }).code
+        : undefined;
+
 const isSerializationFailure = (error: unknown): boolean =>
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: string }).code === SERIALIZATION_FAILURE;
+    errorCode(error) === SERIALIZATION_FAILURE;
+
+/**
+ * Works out what a duplicate key means.
+ *
+ * Reached only when the claim lost the insert, so a row exists. Whether that
+ * is a replay, a client bug or a concurrent duplicate depends on what is in
+ * it.
+ */
+const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Promise<Outcome> => {
+    const existing = await readKey(pool, context);
+    if (!existing) {
+        // The key was purged between the failed insert and this read. Treating
+        // it as in flight asks the client to retry, which is the safe answer
+        // when the state is genuinely unknown.
+        return { kind: 'in_flight' };
+    }
+    if (existing.requestHash !== context.requestHash) return { kind: 'key_reused' };
+    if (existing.result === null) return { kind: 'in_flight' };
+    return { kind: 'replayed', result: existing.result as CommandResult };
+};
 
 /**
  * Runs one decision inside a transaction, under the chosen strategy.
@@ -100,8 +146,9 @@ const runCommand = async (
     pool: pg.Pool,
     strategy: Strategy,
     command: Command,
-    decide: (stock: Stock, entries: readonly LedgerEntry[]) => CommandResult
-): Promise<CommandResult> => {
+    decide: (stock: Stock, entries: readonly LedgerEntry[]) => CommandResult,
+    idempotency?: IdempotencyContext
+): Promise<Outcome> => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         const client = await pool.connect();
         try {
@@ -109,24 +156,38 @@ const runCommand = async (
                 strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
             );
 
+            // Claimed inside the same transaction as the work, so a key exists
+            // only if what it describes does.
+            if (idempotency) await claimKey(client, idempotency);
+
             const stock = await readStock(client, command.sku, strategy === 'row_lock');
             const entries = await readEntries(client, command.sku);
             const result = decide(stock, entries);
 
-            if (!result.ok) {
-                await client.query('rollback');
-                return result;
+            // A rejection is an answer, so it is recorded and replayed like any
+            // other. Retrying a request that was refused for lack of stock
+            // should not quietly succeed later because stock arrived.
+            if (result.ok) {
+                await appendEntries(client, result.entries);
+                await applyPhysicalDelta(client, command.sku, result.physicalDelta);
             }
+            if (idempotency) await recordResult(client, idempotency, result);
 
-            await appendEntries(client, result.entries);
-            await applyPhysicalDelta(client, command.sku, result.physicalDelta);
-            await client.query('commit');
-            return result;
+            // A rejected command writes nothing, so without a key there is
+            // nothing to keep and the transaction rolls back. With a key the
+            // rejection itself is worth keeping, so the retry gets the same
+            // answer rather than a fresh evaluation against newer stock.
+            const shouldCommit = result.ok || idempotency !== undefined;
+            await client.query(shouldCommit ? 'commit' : 'rollback');
+            return { kind: 'applied', result };
         } catch (error) {
             await client.query('rollback').catch(() => undefined);
             // A serialization failure means another transaction won the race.
             // The work was never applied, so replaying it is safe and the
             // retry sees the winner's effect.
+            if (idempotency && errorCode(error) === UNIQUE_VIOLATION) {
+                return resolveDuplicate(pool, idempotency);
+            }
             if (isSerializationFailure(error) && attempt < MAX_ATTEMPTS) continue;
             throw error;
         } finally {
@@ -139,22 +200,46 @@ const runCommand = async (
 export const createStore = (pool: pg.Pool, strategy: Strategy) => ({
     strategy,
 
-    placeOrder: (command: Command, policy: OversellPolicy): Promise<CommandResult> =>
-        runCommand(pool, strategy, command, (stock, entries) =>
-            placeOrder(
-                { stock, entries, orderId: command.orderId, quantity: command.quantity },
-                policy
-            )
+    placeOrder: (
+        command: Command,
+        policy: OversellPolicy,
+        idempotency?: IdempotencyContext
+    ): Promise<Outcome> =>
+        runCommand(
+            pool,
+            strategy,
+            command,
+            (stock, entries) =>
+                placeOrder(
+                    { stock, entries, orderId: command.orderId, quantity: command.quantity },
+                    policy
+                ),
+            idempotency
         ),
 
-    shipOrder: (command: Command): Promise<CommandResult> =>
-        runCommand(pool, strategy, command, (stock, entries) =>
-            shipOrder({ stock, entries, orderId: command.orderId, quantity: command.quantity })
+    shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+        runCommand(
+            pool,
+            strategy,
+            command,
+            (stock, entries) =>
+                shipOrder({ stock, entries, orderId: command.orderId, quantity: command.quantity }),
+            idempotency
         ),
 
-    cancelOrder: (command: Command): Promise<CommandResult> =>
-        runCommand(pool, strategy, command, (stock, entries) =>
-            cancelOrder({ stock, entries, orderId: command.orderId, quantity: command.quantity })
+    cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+        runCommand(
+            pool,
+            strategy,
+            command,
+            (stock, entries) =>
+                cancelOrder({
+                    stock,
+                    entries,
+                    orderId: command.orderId,
+                    quantity: command.quantity,
+                }),
+            idempotency
         ),
 });
 
