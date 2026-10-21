@@ -34,13 +34,28 @@ export interface ServerOptions {
 const REQUEST_TIMEOUT_MS = 10_000;
 const BODY_LIMIT_BYTES = 16 * 1024;
 
+/**
+ * Identifiers are bounded at the edge, where an over long one can be a 400.
+ *
+ * SKUs and order ids appear in paths, and Fastify refuses a path parameter
+ * longer than 100 characters, so accepting a longer one in a body would create
+ * an order that could be placed and then never shipped or cancelled. The
+ * idempotency key only travels in a header, and 255 matches common practice.
+ * Both sit far below the btree entry limit an unbounded key used to reach,
+ * which came back as a 500.
+ */
+const MAX_PATH_IDENTIFIER = 100;
+const MAX_IDEMPOTENCY_KEY = 255;
+
+const identifier = { type: 'string', minLength: 1, maxLength: MAX_PATH_IDENTIFIER } as const;
+
 const orderBody = {
     type: 'object',
     required: ['sku', 'orderId', 'quantity'],
     additionalProperties: false,
     properties: {
-        sku: { type: 'string', minLength: 1 },
-        orderId: { type: 'string', minLength: 1 },
+        sku: identifier,
+        orderId: identifier,
         quantity: { type: 'integer', minimum: 1 },
     },
 } as const;
@@ -50,8 +65,20 @@ const amendmentBody = {
     required: ['sku', 'quantity'],
     additionalProperties: false,
     properties: {
-        sku: { type: 'string', minLength: 1 },
+        sku: identifier,
         quantity: { type: 'integer', minimum: 1 },
+    },
+} as const;
+
+/**
+ * A key that is present but empty is refused rather than ignored, for the same
+ * reason an unknown body field is. The client asked for idempotency, and
+ * quietly not providing it is worse than saying no.
+ */
+const idempotencyHeaders = {
+    type: 'object',
+    properties: {
+        'idempotency-key': { type: 'string', minLength: 1, maxLength: MAX_IDEMPOTENCY_KEY },
     },
 } as const;
 
@@ -307,7 +334,7 @@ export const createServer = ({
 
     app.post<{ Body: { sku: string; orderId: string; quantity: number } }>(
         '/orders',
-        { schema: { body: orderBody } },
+        { schema: { body: orderBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { sku, orderId, quantity } = request.body;
             const merchantId = request.merchant.id;
@@ -328,7 +355,7 @@ export const createServer = ({
 
     app.post<{ Params: { orderId: string }; Body: { sku: string; quantity: number } }>(
         '/orders/:orderId/shipments',
-        { schema: { body: amendmentBody } },
+        { schema: { body: amendmentBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;
@@ -349,7 +376,7 @@ export const createServer = ({
 
     app.post<{ Params: { orderId: string }; Body: { sku: string; quantity: number } }>(
         '/orders/:orderId/cancellations',
-        { schema: { body: amendmentBody } },
+        { schema: { body: amendmentBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;
