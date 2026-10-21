@@ -17,6 +17,11 @@ export default defineConfig({
             DATABASE_URL:
                 process.env.DATABASE_URL ??
                 'postgres://reservations:reservations@localhost:5432/reservations_test',
+            // The suite exercises the application role, policies and all,
+            // rather than taking the owner's privileges as a shortcut.
+            APP_DATABASE_URL:
+                process.env.APP_DATABASE_URL ??
+                'postgres://reservations_app:reservations_app@localhost:5432/reservations_test',
         },
 
         /*

@@ -1,8 +1,9 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { applySchema, createPool } from './pool.js';
+import { createAppPool, createOwnerPool } from './pool.js';
 import { createStore, type Strategy } from './store.js';
 import {
+    prepareDatabase,
     prewarmPool,
     readState,
     resetDatabase,
@@ -23,24 +24,27 @@ import type { OversellPolicy } from '../domain/types.js';
 const sku = 'WIDGET-1';
 const merchantId = 'test-merchant';
 const strict: OversellPolicy = { kind: 'strict' };
+let owner: pg.Pool;
 let pool: pg.Pool;
 
 beforeAll(async () => {
     // Comfortably more than the racing tests open at once. A pool that runs
     // out of clients stalls, and from the outside that is indistinguishable
     // from the deadlock those tests exist to rule out.
-    pool = createPool({ max: 30 });
-    await applySchema(pool);
+    owner = createOwnerPool({ max: 5 });
+    await prepareDatabase(owner);
+    pool = createAppPool({ max: 30 });
 });
 
 afterAll(async () => {
     await pool.end();
+    await owner.end();
 });
 
 beforeEach(async () => {
-    await resetDatabase(pool);
-    await seedMerchant(pool, merchantId);
-    await seedStock(pool, merchantId, sku, 10);
+    await resetDatabase(owner);
+    await seedMerchant(owner, merchantId);
+    await seedStock(owner, merchantId, sku, 10);
 });
 
 describe('the ledger through Postgres', () => {
@@ -51,7 +55,7 @@ describe('the ledger through Postgres', () => {
         );
 
         expect(result.ok).toBe(true);
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state).toMatchObject({ physical: 10, net: -3, salable: 7 });
     });
 
@@ -60,7 +64,7 @@ describe('the ledger through Postgres', () => {
         await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict);
         await store.shipOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 });
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state).toMatchObject({ physical: 7, net: 0, salable: 7 });
         expect(state.entries.map((entry) => entry.reason)).toEqual([
             'order_placed',
@@ -73,7 +77,7 @@ describe('the ledger through Postgres', () => {
         await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict);
         await store.cancelOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 });
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state).toMatchObject({ physical: 10, net: 0, salable: 10 });
     });
 
@@ -87,7 +91,7 @@ describe('the ledger through Postgres', () => {
             ok: false,
             rejection: { kind: 'insufficient_salable', requested: 11, available: 10 },
         });
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state.entries).toHaveLength(0);
     });
 });
@@ -98,14 +102,24 @@ describe('the ledger is append only in the database, not only by convention', ()
         await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 1 }, strict);
     });
 
-    it('refuses an update', async () => {
-        await expect(pool.query('update reservations set quantity = 99')).rejects.toThrow(
+    /*
+     * Run as the owner on purpose.
+     *
+     * The application role has no delete privilege at all, so through it these
+     * would fail on permission before the trigger was ever consulted, and
+     * would prove the grant rather than the rule. The owner is allowed to try,
+     * which is exactly what makes it the right role to prove the trigger stops
+     * it. That the application cannot even attempt it is covered separately in
+     * security.test.ts.
+     */
+    it('refuses an update, even from the owner', async () => {
+        await expect(owner.query('update reservations set quantity = 99')).rejects.toThrow(
             /append only/
         );
     });
 
-    it('refuses a delete', async () => {
-        await expect(pool.query('delete from reservations')).rejects.toThrow(/append only/);
+    it('refuses a delete, even from the owner', async () => {
+        await expect(owner.query('delete from reservations')).rejects.toThrow(/append only/);
     });
 });
 
@@ -123,15 +137,21 @@ describe('without a concurrency control the ledger records an oversell', () => {
      * cannot demonstrate the bug cannot prove the fix.
      */
     it('lets two interleaved transactions both commit against one unit', async () => {
-        await resetDatabase(pool);
-        await seedMerchant(pool, merchantId);
-        await seedStock(pool, merchantId, sku, 1);
+        await resetDatabase(owner);
+        await seedMerchant(owner, merchantId);
+        await seedStock(owner, merchantId, sku, 1);
 
         const first = await pool.connect();
         const second = await pool.connect();
         try {
             await first.query('begin');
             await second.query('begin');
+            // The store does this for every transaction it opens. These are
+            // hand rolled, so they have to do it too, or row level security
+            // correctly shows them nothing.
+            const declareTenant = "select set_config('app.merchant_id', $1, true)";
+            await first.query(declareTenant, [merchantId]);
+            await second.query(declareTenant, [merchantId]);
 
             const firstRead = await first.query<{ physical: number }>(
                 'select physical from stock where merchant_id = $1 and sku = $2',
@@ -155,7 +175,7 @@ describe('without a concurrency control the ledger records an oversell', () => {
             second.release();
         }
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state.net).toBe(-2);
         expect(state.salable).toBe(-1);
     });
@@ -176,9 +196,9 @@ describe('the harness genuinely contends', () => {
      * the one that does nothing.
      */
     it('oversells badly with no concurrency control', async () => {
-        await resetDatabase(pool);
-        await seedMerchant(pool, merchantId);
-        await seedStock(pool, merchantId, sku, 1);
+        await resetDatabase(owner);
+        await seedMerchant(owner, merchantId);
+        await seedStock(owner, merchantId, sku, 1);
         await prewarmPool(pool, CONTENDERS);
 
         const store = createStore(pool, 'none');
@@ -196,7 +216,7 @@ describe('the harness genuinely contends', () => {
         const accepted = results.filter((result) => result.ok).length;
         expect(accepted).toBeGreaterThan(1);
 
-        const state = await readState(pool, merchantId, sku);
+        const state = await readState(owner, merchantId, sku);
         expect(state.net).toBe(-accepted);
         expect(state.salable).toBeLessThan(0);
     });
@@ -206,9 +226,9 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
     'the %s strategy sells the last unit exactly once',
     (strategy) => {
         beforeEach(async () => {
-            await resetDatabase(pool);
-            await seedMerchant(pool, merchantId);
-            await seedStock(pool, merchantId, sku, 1);
+            await resetDatabase(owner);
+            await seedMerchant(owner, merchantId);
+            await seedStock(owner, merchantId, sku, 1);
             await prewarmPool(pool, CONTENDERS);
         });
 
@@ -230,16 +250,16 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
                 expect(result.rejection.kind).toBe('insufficient_salable');
             });
 
-            const state = await readState(pool, merchantId, sku);
+            const state = await readState(owner, merchantId, sku);
             expect(state.net).toBe(-1);
             expect(state.salable).toBe(0);
             expect(state.entries).toHaveLength(1);
         });
 
         it('keeps the ledger consistent when orders and cancellations race', async () => {
-            await resetDatabase(pool);
-            await seedMerchant(pool, merchantId);
-            await seedStock(pool, merchantId, sku, 5);
+            await resetDatabase(owner);
+            await seedMerchant(owner, merchantId);
+            await seedStock(owner, merchantId, sku, 5);
             await prewarmPool(pool, 10);
             const store = createStore(pool, strategy);
 
@@ -257,7 +277,7 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
                 )
             );
 
-            const state = await readState(pool, merchantId, sku);
+            const state = await readState(owner, merchantId, sku);
             expect(state.net).toBe(0);
             expect(state.physical).toBe(5);
             expect(state.salable).toBe(5);

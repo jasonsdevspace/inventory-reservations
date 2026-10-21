@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { withTenant } from './pool.js';
 import { cancelOrder, placeOrder, shipOrder } from '../domain/commands.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../domain/types.js';
 import {
@@ -180,7 +181,12 @@ const isSerializationFailure = (error: unknown): boolean =>
  * it.
  */
 const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Promise<Outcome> => {
-    const existing = await readKey(pool, context);
+    // Inside a tenant scoped transaction, because the lookup is subject to the
+    // same row level policies as everything else. Without that it finds
+    // nothing and reports every duplicate as still running.
+    const existing = await withTenant(pool, context.merchantId, (client) =>
+        readKey(client, context)
+    );
     if (!existing) {
         // The key was purged between the failed insert and this read. Treating
         // it as in flight asks the client to retry, which is the safe answer
@@ -221,6 +227,15 @@ const runAttempt = async (
         await client.query(
             strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
         );
+
+        // Declares whose data this transaction is allowed to touch. Row level
+        // security reads it, so a transaction that forgot would see no rows
+        // rather than everybody's. Transaction local, because connections are
+        // pooled and a session setting would leak to the next caller.
+        await client.query('select set_config($1, $2, true)', [
+            'app.merchant_id',
+            command.merchantId,
+        ]);
 
         // Claimed inside the same transaction as the work, so a key exists
         // only if what it describes does.
