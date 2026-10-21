@@ -174,8 +174,11 @@ export const responseFor = (
                     replayed,
                 };
             }
+            // A replay returns the first answer, status included, as a
+            // replayed rejection already did. Idempotency-Replayed is what says
+            // it is a replay, so the status does not have to say it as well.
             return {
-                status: replayed ? 200 : successStatus,
+                status: successStatus,
                 body: { entries: result.entries, physicalDelta: result.physicalDelta },
                 replayed,
             };
