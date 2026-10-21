@@ -1,8 +1,23 @@
 import type pg from 'pg';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
-import type { LedgerEntry, OversellPolicy } from '../domain/types.js';
+import type { CommandResult, LedgerEntry, OversellPolicy } from '../domain/types.js';
+import type { Outcome } from './store.js';
 
 /** Helpers shared by the integration tests. Not part of the shipped surface. */
+
+/**
+ * Unwraps the command result from a store outcome.
+ *
+ * Most tests care about whether the order was accepted rather than whether the
+ * answer was computed now or replayed from an idempotency key, so they assert
+ * on this and the idempotency tests assert on the outcome itself.
+ */
+export const resultOf = (outcome: Outcome): CommandResult => {
+    if (outcome.kind !== 'applied' && outcome.kind !== 'replayed') {
+        throw new Error(`expected a result, got ${outcome.kind}`);
+    }
+    return outcome.result;
+};
 
 export const resetDatabase = async (pool: pg.Pool): Promise<void> => {
     // Truncate rather than delete. The append only trigger refuses deletes,
