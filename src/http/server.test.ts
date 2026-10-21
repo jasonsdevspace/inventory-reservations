@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { applySchema, createPool } from '../postgres/pool.js';
-import { prewarmPool, resetDatabase, seedMerchant, seedStock } from '../postgres/testkit.js';
+import { createAppPool, createOwnerPool } from '../postgres/pool.js';
+import {
+    prepareDatabase,
+    prewarmPool,
+    resetDatabase,
+    seedMerchant,
+    seedStock,
+} from '../postgres/testkit.js';
 import { parsePolicy } from './policy.js';
 import { createServer, responseFor } from './server.js';
 
@@ -11,12 +17,14 @@ const merchantId = 'acme-test';
 const apiKey = 'key-acme-test';
 const otherMerchantId = 'globex-test';
 const otherApiKey = 'key-globex-test';
+let owner: pg.Pool;
 let pool: pg.Pool;
 let app: FastifyInstance;
 
 beforeAll(async () => {
-    pool = createPool({ max: 20 });
-    await applySchema(pool);
+    owner = createOwnerPool({ max: 5 });
+    await prepareDatabase(owner);
+    pool = createAppPool({ max: 20 });
     app = createServer({ pool, strategy: 'row_lock', policy: { kind: 'strict' } });
     await app.ready();
 });
@@ -24,14 +32,15 @@ beforeAll(async () => {
 afterAll(async () => {
     await app.close();
     await pool.end();
+    await owner.end();
 });
 
 beforeEach(async () => {
-    await resetDatabase(pool);
-    await seedMerchant(pool, merchantId, apiKey);
-    await seedMerchant(pool, otherMerchantId, otherApiKey);
-    await seedStock(pool, merchantId, sku, 10);
-    await seedStock(pool, otherMerchantId, sku, 99);
+    await resetDatabase(owner);
+    await seedMerchant(owner, merchantId, apiKey);
+    await seedMerchant(owner, otherMerchantId, otherApiKey);
+    await seedStock(owner, merchantId, sku, 10);
+    await seedStock(owner, otherMerchantId, sku, 99);
 });
 
 const place = (body: unknown, key?: string, auth = apiKey) =>

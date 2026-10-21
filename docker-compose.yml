@@ -13,25 +13,38 @@ services:
     # with no local Node or Postgres installed. The test suite talks to the
     # database directly and does not need this service, so it is here for
     # trying the thing rather than for the suite.
+    # Migrations are a deployment step, not something the service does to
+    # itself on startup. This runs as the owner, applies the schema, the
+    # application role, its grants and the row level policies, then exits. The
+    # service waits for it to finish and then connects as a role that has none
+    # of those privileges.
+    migrate:
+        build: .
+        command: ['dist/postgres/migrate-cli.js']
+        environment:
+            DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
+            APP_DB_PASSWORD: reservations_app
+            SEED_DEMO: 'true'
+        depends_on:
+            postgres:
+                condition: service_healthy
+        restart: 'no'
+
     api:
         build: .
         environment:
-            DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
+            APP_DATABASE_URL: postgres://reservations_app:reservations_app@postgres:5432/reservations
             PORT: 8080
             # Interpolated so either can be overridden from the shell without
             # editing this file. A hardcoded value here beats the environment
             # and makes the documented override silently do nothing.
             CONCURRENCY_STRATEGY: ${CONCURRENCY_STRATEGY:-row_lock}
             OVERSELL_POLICY: ${OVERSELL_POLICY:-strict}
-            # So `docker compose up` leaves something to query. A clean
-            # database has no SKUs, and a service with nothing in it cannot be
-            # seen working.
-            SEED_DEMO: 'true'
         ports:
             - '8080:8080'
         depends_on:
-            postgres:
-                condition: service_healthy
+            migrate:
+                condition: service_completed_successfully
 
     postgres:
         image: postgres:18-alpine

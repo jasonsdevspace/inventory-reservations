@@ -26,9 +26,10 @@ ENV NODE_ENV=production
 
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-# Read at startup to apply the schema, so it has to sit beside the compiled
-# module that reads it rather than only in the source tree.
-COPY src/postgres/schema.sql ./dist/postgres/schema.sql
+# SQL is read at runtime by the migration step, so it has to sit beside the
+# compiled module that reads it rather than only in the source tree. Copied as
+# a group, because naming files individually means the next one gets forgotten.
+COPY src/postgres/*.sql ./dist/postgres/
 
 # Distroless provides this unprivileged user. Running as root in a container
 # that needs no privileges is a habit worth not having.
