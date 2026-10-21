@@ -74,4 +74,9 @@ services:
             # Mounted at /var/lib/postgresql rather than its data subdirectory.
             # Postgres 18 images place the cluster one level down and refuse to
             # start when the mount lands on the inner path instead.
+            #
+            # Worth knowing: `docker compose stop postgres` discards everything,
+            # including the application role. Use `docker compose up -d` to come
+            # back, which reruns the migration step. Swap this for a named
+            # volume if you want the data to survive.
             - /var/lib/postgresql

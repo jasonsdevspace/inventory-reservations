@@ -25,11 +25,42 @@ export const appConnectionString = (): string =>
  * transactions than the driver's default pool allows, and a pool that runs out
  * of clients looks exactly like a deadlock from the outside.
  */
+/**
+ * A pool that survives the database going away.
+ *
+ * An idle client that loses its connection emits an error on the pool, and an
+ * unhandled error event on an EventEmitter takes the process down. So losing
+ * Postgres for a moment does not degrade the service, it kills it, and every
+ * instance restart loops until the database comes back.
+ *
+ * Handled here rather than at each call site, because the whole point is to
+ * catch the one nobody remembered to handle. Requests still fail while the
+ * database is unreachable. The difference is that the process stays up,
+ * readiness reports what is wrong, and traffic stops being routed to it
+ * without anything being restarted.
+ */
+const withErrorHandling = (pool: pg.Pool, label: string): pg.Pool => {
+    pool.on('error', (error) => {
+        console.error(
+            JSON.stringify({
+                level: 'error',
+                msg: 'idle client error',
+                pool: label,
+                error: error.message,
+            })
+        );
+    });
+    return pool;
+};
+
 export const createOwnerPool = (overrides: pg.PoolConfig = {}): pg.Pool =>
-    new Pool({ connectionString: ownerConnectionString(), ...overrides });
+    withErrorHandling(
+        new Pool({ connectionString: ownerConnectionString(), ...overrides }),
+        'owner'
+    );
 
 export const createAppPool = (overrides: pg.PoolConfig = {}): pg.Pool =>
-    new Pool({ connectionString: appConnectionString(), ...overrides });
+    withErrorHandling(new Pool({ connectionString: appConnectionString(), ...overrides }), 'app');
 
 /**
  * Runs a read inside a transaction that declares whose data it is.

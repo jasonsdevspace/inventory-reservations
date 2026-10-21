@@ -25,7 +25,12 @@ beforeAll(async () => {
     owner = createOwnerPool({ max: 5 });
     await prepareDatabase(owner);
     pool = createAppPool({ max: 20 });
-    app = createServer({ pool, strategy: 'row_lock', policy: { kind: 'strict' } });
+    app = createServer({
+        pool,
+        strategy: 'row_lock',
+        policy: { kind: 'strict' },
+        logLevel: false,
+    });
     await app.ready();
 });
 
@@ -191,6 +196,54 @@ describe('idempotency over HTTP', () => {
 
         const inventory = await get(`/inventory/${sku}`);
         expect(inventory.json()).toMatchObject({ reserved: -3 });
+    });
+});
+
+describe('probes', () => {
+    /*
+     * Liveness and readiness answer different questions. Conflating them means
+     * a database outage either restart loops every healthy instance or leaves
+     * them all accepting requests they cannot serve.
+     */
+    it('answers liveness without a key', async () => {
+        const response = await app.inject({ method: 'GET', url: '/health' });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ status: 'ok' });
+    });
+
+    it('answers readiness without a key', async () => {
+        const response = await app.inject({ method: 'GET', url: '/ready' });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ status: 'ready' });
+    });
+
+    it('reports not ready when the database is unreachable', async () => {
+        const dead = createAppPool({
+            connectionString: 'postgres://nobody:nobody@127.0.0.1:1/none',
+            connectionTimeoutMillis: 500,
+        });
+        const unreachable = createServer({
+            pool: dead,
+            strategy: 'row_lock',
+            policy: { kind: 'strict' },
+            logLevel: false,
+        });
+        await unreachable.ready();
+
+        // Alive, because restarting would not help. Not ready, because
+        // sending it traffic would not help either.
+        expect((await unreachable.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+        const readiness = await unreachable.inject({ method: 'GET', url: '/ready' });
+        expect(readiness.statusCode).toBe(503);
+        expect(readiness.json()).toEqual({ status: 'not_ready' });
+
+        await unreachable.close();
+        await dead.end();
+    });
+
+    it('returns a request identifier a caller can quote', async () => {
+        const response = await get(`/inventory/${sku}`);
+        expect(response.headers['x-request-id']).toBeTruthy();
     });
 });
 

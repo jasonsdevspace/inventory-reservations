@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
 import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
@@ -19,7 +19,20 @@ export interface ServerOptions {
     readonly pool: pg.Pool;
     readonly strategy: Strategy;
     readonly policy: OversellPolicy;
+    /** Off in tests, where a log line per request is noise rather than signal. */
+    readonly logLevel?: string | false;
 }
+
+/**
+ * Limits that should be decided rather than inherited.
+ *
+ * A request that has not finished in ten seconds is not going to, and holding
+ * the connection open costs more than failing does. The body limit is well
+ * above any legitimate order and well below anything worth buffering, since
+ * every request this API accepts is a handful of fields.
+ */
+const REQUEST_TIMEOUT_MS = 10_000;
+const BODY_LIMIT_BYTES = 16 * 1024;
 
 const orderBody = {
     type: 'object',
@@ -126,7 +139,12 @@ declare module 'fastify' {
     }
 }
 
-export const createServer = ({ pool, strategy, policy }: ServerOptions): FastifyInstance => {
+export const createServer = ({
+    pool,
+    strategy,
+    policy,
+    logLevel,
+}: ServerOptions): FastifyInstance => {
     /*
      * `removeAdditional` is off deliberately.
      *
@@ -136,7 +154,29 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
      * that move stock that is the wrong trade, so an unknown field is a 400
      * and the client finds out immediately.
      */
-    const app = Fastify({ logger: false, ajv: { customOptions: { removeAdditional: false } } });
+    const app = Fastify({
+        ajv: { customOptions: { removeAdditional: false } },
+        requestTimeout: REQUEST_TIMEOUT_MS,
+        bodyLimit: BODY_LIMIT_BYTES,
+        /*
+         * Structured logs, with the API key kept out of them.
+         *
+         * Redaction is not a nicety here. An access log containing the
+         * credential that authorised the request turns log retention into
+         * credential retention, and anybody who can read logs can place
+         * orders.
+         */
+        logger:
+            logLevel === false
+                ? false
+                : {
+                      level: logLevel ?? 'info',
+                      redact: {
+                          paths: ['req.headers["x-api-key"]', 'req.headers.authorization'],
+                          censor: '[redacted]',
+                      },
+                  },
+    });
     const store = createStore(pool, strategy);
 
     const send = (response: FastifyReply, outcome: Outcome, successStatus: number) => {
@@ -150,7 +190,46 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
         return response.status(status).send(body);
     };
 
+    /*
+     * Liveness and readiness answer different questions.
+     *
+     * Liveness asks whether the process should be restarted. Readiness asks
+     * whether it should receive traffic. Conflating them means a database
+     * outage either restarts every healthy instance in a loop or leaves them
+     * all taking requests they cannot serve. This service can be alive and not
+     * ready, and says so.
+     */
     app.get('/health', async () => ({ status: 'ok' }));
+
+    app.get('/ready', async (_request, response) => {
+        try {
+            await pool.query('select 1');
+            return { status: 'ready' };
+        } catch {
+            return response.status(503).send({ status: 'not_ready' });
+        }
+    });
+
+    /*
+     * Nothing internal reaches a client.
+     *
+     * An unhandled error carries a stack, a query, and sometimes a connection
+     * string. The caller gets an identifier they can quote, and the detail
+     * goes to the log where it belongs.
+     */
+    app.setErrorHandler((error: FastifyError, request, response) => {
+        if (error.statusCode && error.statusCode < 500) {
+            return response.status(error.statusCode).send({ error: { kind: 'bad_request' } });
+        }
+        request.log.error({ err: error }, 'unhandled error');
+        return response.status(500).send({ error: { kind: 'internal', requestId: request.id } });
+    });
+
+    // Lets a caller quote an identifier when reporting a problem, and ties
+    // their report to the log line that explains it.
+    app.addHook('onSend', async (request, response) => {
+        void response.header('X-Request-Id', request.id);
+    });
 
     /*
      * Everything else belongs to a merchant.
@@ -160,8 +239,17 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
      * identifier as a parameter is an API where every caller can act as every
      * merchant, and no amount of care further down makes up for that.
      */
+    /*
+     * The probes are public. Anything else needs a key.
+     *
+     * Listed rather than checked one at a time, because adding `/ready` and
+     * forgetting the hook is how a readiness probe ends up answering 401 and
+     * an orchestrator decides the instance never became ready.
+     */
+    const publicPaths = new Set(['/health', '/ready']);
+
     app.addHook('onRequest', async (request, response) => {
-        if (request.url === '/health') return;
+        if (publicPaths.has(request.url)) return;
 
         const apiKey = request.headers['x-api-key'];
         if (typeof apiKey !== 'string' || apiKey.length === 0) {
