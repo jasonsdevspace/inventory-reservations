@@ -1,0 +1,34 @@
+# Postgres for local development and for the integration tests.
+#
+# The test suite talks to a real database rather than a fake, because the
+# behaviour under test is the database's: row locking, isolation levels and
+# serialisation failures. A fake would prove nothing about any of them.
+#
+#   docker compose up -d
+#   npm run verify
+services:
+    postgres:
+        image: postgres:18-alpine
+        environment:
+            POSTGRES_USER: reservations
+            POSTGRES_PASSWORD: reservations
+            POSTGRES_DB: reservations
+        ports:
+            - '5432:5432'
+        # The test suite starts issuing queries the moment compose returns, so
+        # readiness has to be real rather than assumed from the container being
+        # up. pg_isready reports when the server will actually accept
+        # connections.
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U reservations -d reservations']
+            interval: 2s
+            timeout: 3s
+            retries: 15
+        tmpfs:
+            # Test data has no reason to survive a restart, and keeping it in
+            # memory makes the racing tests considerably faster to run.
+            #
+            # Mounted at /var/lib/postgresql rather than its data subdirectory.
+            # Postgres 18 images place the cluster one level down and refuse to
+            # start when the mount lands on the inner path instead.
+            - /var/lib/postgresql
