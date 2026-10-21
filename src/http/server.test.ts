@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, createPool } from '../postgres/pool.js';
 import { prewarmPool, resetDatabase, seedMerchant, seedStock } from '../postgres/testkit.js';
 import { parsePolicy } from './policy.js';
-import { createServer } from './server.js';
+import { createServer, responseFor } from './server.js';
 
 const sku = 'WIDGET-1';
 const merchantId = 'acme-test';
@@ -256,4 +256,34 @@ describe('policy configuration', () => {
             expect(() => parsePolicy(raw)).toThrow();
         }
     );
+});
+
+describe('contention', () => {
+    /*
+     * Heavy serialisation conflict is a capacity condition, not a client
+     * mistake. CI found this the hard way: five concurrent cancellations under
+     * the serializable strategy exhausted the retry budget and the raw
+     * Postgres error escaped, which would have reached a caller as a 500
+     * carrying the name of a database source file.
+     *
+     * Tested through the mapping rather than by manufacturing real contention,
+     * which cannot be made deterministic.
+     */
+    it('answers 503 with Retry-After rather than leaking a driver error', () => {
+        const response = responseFor({ kind: 'contention' }, 201);
+
+        expect(response.status).toBe(503);
+        expect(response.retryAfterSeconds).toBe(1);
+        expect(response.body).toEqual({ error: { kind: 'contention' } });
+        expect(JSON.stringify(response.body)).not.toMatch(/predicate|serialize|postgres/i);
+    });
+
+    it('still reports a fresh success as created', () => {
+        const response = responseFor(
+            { kind: 'applied', result: { ok: true, entries: [], physicalDelta: 0 } },
+            201
+        );
+        expect(response.status).toBe(201);
+        expect(response.retryAfterSeconds).toBeUndefined();
+    });
 });
