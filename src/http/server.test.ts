@@ -2,11 +2,15 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, createPool } from '../postgres/pool.js';
-import { prewarmPool, resetDatabase, seedStock } from '../postgres/testkit.js';
+import { prewarmPool, resetDatabase, seedMerchant, seedStock } from '../postgres/testkit.js';
 import { parsePolicy } from './policy.js';
 import { createServer } from './server.js';
 
 const sku = 'WIDGET-1';
+const merchantId = 'acme-test';
+const apiKey = 'key-acme-test';
+const otherMerchantId = 'globex-test';
+const otherApiKey = 'key-globex-test';
 let pool: pg.Pool;
 let app: FastifyInstance;
 
@@ -24,16 +28,35 @@ afterAll(async () => {
 
 beforeEach(async () => {
     await resetDatabase(pool);
-    await pool.query('truncate table idempotency_keys');
-    await seedStock(pool, sku, 10);
+    await seedMerchant(pool, merchantId, apiKey);
+    await seedMerchant(pool, otherMerchantId, otherApiKey);
+    await seedStock(pool, merchantId, sku, 10);
+    await seedStock(pool, otherMerchantId, sku, 99);
 });
 
-const place = (body: unknown, key?: string) =>
+const place = (body: unknown, key?: string, auth = apiKey) =>
     app.inject({
         method: 'POST',
         url: '/orders',
         payload: body as object,
-        headers: key ? { 'idempotency-key': key } : {},
+        headers: {
+            'x-api-key': auth,
+            ...(key ? { 'idempotency-key': key } : {}),
+        },
+    });
+
+const get = (url: string, auth = apiKey) =>
+    app.inject({ method: 'GET', url, headers: { 'x-api-key': auth } });
+
+const post = (url: string, payload: object, auth = apiKey, key?: string) =>
+    app.inject({
+        method: 'POST',
+        url,
+        payload,
+        headers: {
+            'x-api-key': auth,
+            ...(key ? { 'idempotency-key': key } : {}),
+        },
     });
 
 describe('placing an order', () => {
@@ -67,7 +90,7 @@ describe('placing an order', () => {
     });
 
     it('reports an unknown sku as not found', async () => {
-        const response = await app.inject({ method: 'GET', url: '/inventory/NOPE' });
+        const response = await get('/inventory/NOPE');
         expect(response.statusCode).toBe(404);
         expect(response.json()).toEqual({ error: { kind: 'unknown_sku', sku: 'NOPE' } });
     });
@@ -76,7 +99,7 @@ describe('placing an order', () => {
 describe('reading inventory', () => {
     it('derives salable quantity from stock and the ledger', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
-        const response = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const response = await get(`/inventory/${sku}`);
 
         expect(response.json()).toEqual({ sku, physical: 10, reserved: -3, salable: 7 });
     });
@@ -85,36 +108,24 @@ describe('reading inventory', () => {
 describe('shipping and cancelling', () => {
     it('ships against an order and leaves salable quantity alone', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
-        const ship = await app.inject({
-            method: 'POST',
-            url: '/orders/o-1/shipments',
-            payload: { sku, quantity: 3 },
-        });
+        const ship = await post('/orders/o-1/shipments', { sku, quantity: 3 });
 
         expect(ship.statusCode).toBe(201);
-        const inventory = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const inventory = await get(`/inventory/${sku}`);
         expect(inventory.json()).toEqual({ sku, physical: 7, reserved: 0, salable: 7 });
     });
 
     it('cancels and returns the stock to the shelf', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
-        await app.inject({
-            method: 'POST',
-            url: '/orders/o-1/cancellations',
-            payload: { sku, quantity: 3 },
-        });
+        await post('/orders/o-1/cancellations', { sku, quantity: 3 });
 
-        const inventory = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const inventory = await get(`/inventory/${sku}`);
         expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, salable: 10 });
     });
 
     it('refuses to ship more than the order has outstanding', async () => {
         await place({ sku, orderId: 'o-1', quantity: 2 });
-        const ship = await app.inject({
-            method: 'POST',
-            url: '/orders/o-1/shipments',
-            payload: { sku, quantity: 5 },
-        });
+        const ship = await post('/orders/o-1/shipments', { sku, quantity: 5 });
 
         expect(ship.statusCode).toBe(409);
         expect(ship.json().error.kind).toBe('exceeds_commitment');
@@ -137,7 +148,7 @@ describe('idempotency over HTTP', () => {
         expect(second.statusCode).toBe(200);
         expect(second.headers['idempotency-replayed']).toBe('true');
 
-        const inventory = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const inventory = await get(`/inventory/${sku}`);
         expect(inventory.json()).toMatchObject({ reserved: -3 });
     });
 
@@ -151,12 +162,7 @@ describe('idempotency over HTTP', () => {
 
     it('scopes keys per endpoint, so the same key on another operation is a different key', async () => {
         await place(order, 'shared');
-        const ship = await app.inject({
-            method: 'POST',
-            url: '/orders/o-1/shipments',
-            payload: { sku, quantity: 3 },
-            headers: { 'idempotency-key': 'shared' },
-        });
+        const ship = await post('/orders/o-1/shipments', { sku, quantity: 3 }, apiKey, 'shared');
 
         expect(ship.statusCode).toBe(201);
         expect(ship.headers['idempotency-replayed']).toBe('false');
@@ -174,8 +180,63 @@ describe('idempotency over HTTP', () => {
                 expect([200, 409]).toContain(response.statusCode);
             });
 
-        const inventory = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const inventory = await get(`/inventory/${sku}`);
         expect(inventory.json()).toMatchObject({ reserved: -3 });
+    });
+});
+
+describe('tenancy', () => {
+    it('refuses a request with no key', async () => {
+        const response = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        expect(response.statusCode).toBe(401);
+        expect(response.json()).toEqual({ error: { kind: 'missing_api_key' } });
+    });
+
+    it('gives the same answer for an unknown key as for a missing one', async () => {
+        const missing = await app.inject({ method: 'GET', url: `/inventory/${sku}` });
+        const wrong = await get(`/inventory/${sku}`, 'not-a-real-key');
+
+        expect(wrong.statusCode).toBe(missing.statusCode);
+        expect(wrong.json()).toEqual(missing.json());
+    });
+
+    it('shows each merchant its own quantity for the same SKU', async () => {
+        expect((await get(`/inventory/${sku}`)).json()).toMatchObject({ physical: 10 });
+        expect((await get(`/inventory/${sku}`, otherApiKey)).json()).toMatchObject({
+            physical: 99,
+        });
+    });
+
+    it('keeps one merchant order from touching another merchant stock', async () => {
+        await place({ sku, orderId: 'o-1', quantity: 4 });
+
+        expect((await get(`/inventory/${sku}`)).json()).toMatchObject({
+            reserved: -4,
+            salable: 6,
+        });
+        expect((await get(`/inventory/${sku}`, otherApiKey)).json()).toMatchObject({
+            reserved: 0,
+            salable: 99,
+        });
+    });
+
+    it('refuses a merchant shipping against an order it does not own', async () => {
+        await place({ sku, orderId: 'o-1', quantity: 4 });
+        const ship = await post('/orders/o-1/shipments', { sku, quantity: 4 }, otherApiKey);
+
+        expect(ship.statusCode).toBe(409);
+        expect(ship.json().error.kind).toBe('exceeds_commitment');
+    });
+
+    it('scopes idempotency keys per merchant', async () => {
+        const first = await place({ sku, orderId: 'o-1', quantity: 1 }, 'shared-key');
+        const second = await place({ sku, orderId: 'o-1', quantity: 1 }, 'shared-key', otherApiKey);
+
+        expect(first.statusCode).toBe(201);
+        // Same key, different merchant, so it is a different key and the order
+        // is placed rather than replayed.
+        expect(second.statusCode).toBe(201);
+        expect(second.headers['idempotency-replayed']).toBe('false');
     });
 });
 

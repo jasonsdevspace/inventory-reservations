@@ -126,6 +126,48 @@ The model depends on compensation rather than mutation. A cancellation adds a po
 does not remove the negative one. Allowing an update would let a caller quietly erase the evidence
 an audit or a reconciliation run depends on.
 
+## Inventory belongs to somebody
+
+Every stock level and every ledger entry belongs to a merchant. Nothing in the schema is global,
+because a quantity that is nobody's is a quantity nobody is accountable for.
+
+The merchant is established by the API key on the request and never by anything the caller says
+about itself. An API that accepts a merchant identifier as a parameter is an API where every
+caller can act as every merchant, and no amount of care further down makes up for that. Keys are
+stored hashed, so a leaked backup does not hand over the ability to place orders.
+
+Two seeded merchants both own a SKU called `DEMO-1`, holding different quantities, which makes the
+point better than prose can:
+
+```
+$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
+{"sku":"DEMO-1","physical":5,"reserved":0,"salable":5}
+
+$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-globex'
+{"sku":"DEMO-1","physical":11,"reserved":0,"salable":11}
+```
+
+An order placed by one is invisible to the other, and a SKU one merchant has never heard of is a
+404 rather than a glimpse of somebody else's catalogue.
+
+A missing key and an unrecognised key get the same answer, deliberately. Distinguishing them tells
+an attacker which of their guesses was a real key.
+
+Scoping is enforced three times over. The application scopes every query, the ledger carries a
+composite foreign key so a reservation cannot reference another merchant's stock even if a query
+forgets, and idempotency keys are scoped per merchant so two merchants choosing the same key
+cannot collide.
+
+### What did not change
+
+The domain core did not move at all. Not one line.
+
+Tenancy is a question about who may act and which rows they may see. It is not a question about
+what inventory means, and the core only knows the second kind of thing. It still takes a stock
+level, some entries and a policy, and still has no idea a merchant exists. Keeping that boundary
+honest is why the change landed in the adapter and the schema rather than spreading through
+everything.
+
 ## The API
 
 |                                  |                                                 |
@@ -220,7 +262,7 @@ Requires Docker. Node 24 as well if you want to run the test suite.
 
 ```bash
 docker compose up -d --build   # the API on :8080 and Postgres behind it
-curl localhost:8080/inventory/DEMO-1
+curl localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
 ```
 
 That is the whole setup. No local Node, no local Postgres.
@@ -242,15 +284,20 @@ request rather than only after you make one.
 ```bash
 # commit two of the five
 curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'idempotency-key: try-1' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
+  -H 'x-api-key: demo-key-acme' -H 'idempotency-key: try-1' \
+  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
 
 # send it again, and nothing happens twice
 curl -isX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'idempotency-key: try-1' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | head -1
+  -H 'x-api-key: demo-key-acme' -H 'idempotency-key: try-1' \
+  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | head -1
 
 # ask for more than is there
 curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -d '{"sku":"DEMO-SCARCE","orderId":"o-2","quantity":4}'
+  -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-SCARCE","orderId":"o-2","quantity":4}'
+
+# the other merchant is untouched by any of it
+curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-globex'
 ```
 
 Seeding is behind `SEED_DEMO`, which compose sets and production leaves unset.
@@ -273,7 +320,7 @@ To try a different policy, override it and restart:
 ```bash
 OVERSELL_POLICY=backorder:10 docker compose up -d --force-recreate api
 curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -d '{"sku":"DEMO-SCARCE","orderId":"o-9","quantity":6}'
+  -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-SCARCE","orderId":"o-9","quantity":6}'
 ```
 
 With one unit on hand and a backorder limit of ten, that order is accepted and salable quantity

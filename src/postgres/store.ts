@@ -37,6 +37,16 @@ const SERIALIZATION_FAILURE = '40001';
 const MAX_ATTEMPTS = 5;
 
 interface Command {
+    /**
+     * Whose inventory this is.
+     *
+     * Supplied by the caller of the store, which resolves it from the API key
+     * on the request rather than from anything the client claimed. Every query
+     * below is scoped by it, and the composite foreign key on the ledger means
+     * the database refuses a reservation against another merchant's stock even
+     * if a future query forgets.
+     */
+    readonly merchantId: string;
     readonly sku: string;
     readonly orderId: string;
     readonly quantity: number;
@@ -59,25 +69,38 @@ export type Outcome =
     | { readonly kind: 'in_flight' }
     | { readonly kind: 'key_reused' };
 
-const readStock = async (client: pg.PoolClient, sku: string, lock: boolean): Promise<Stock> => {
+const readStock = async (
+    client: pg.PoolClient,
+    merchantId: string,
+    sku: string,
+    lock: boolean
+): Promise<Stock> => {
     const { rows } = await client.query<{ sku: string; physical: number }>(
-        `select sku, physical from stock where sku = $1${lock ? ' for update' : ''}`,
-        [sku]
+        `select sku, physical from stock where merchant_id = $1 and sku = $2${
+            lock ? ' for update' : ''
+        }`,
+        [merchantId, sku]
     );
     const row = rows[0];
     if (!row) throw new Error(`unknown sku: ${sku}`);
     return { sku: row.sku, physical: row.physical };
 };
 
-const readEntries = async (client: pg.PoolClient, sku: string): Promise<LedgerEntry[]> => {
+const readEntries = async (
+    client: pg.PoolClient,
+    merchantId: string,
+    sku: string
+): Promise<LedgerEntry[]> => {
     const { rows } = await client.query<{
         sku: string;
         order_id: string;
         quantity: number;
         reason: LedgerEntry['reason'];
-    }>('select sku, order_id, quantity, reason from reservations where sku = $1 order by id', [
-        sku,
-    ]);
+    }>(
+        `select sku, order_id, quantity, reason from reservations
+         where merchant_id = $1 and sku = $2 order by id`,
+        [merchantId, sku]
+    );
     return rows.map((row) => ({
         sku: row.sku,
         orderId: row.order_id,
@@ -88,23 +111,29 @@ const readEntries = async (client: pg.PoolClient, sku: string): Promise<LedgerEn
 
 const appendEntries = async (
     client: pg.PoolClient,
+    merchantId: string,
     entries: readonly LedgerEntry[]
 ): Promise<void> => {
     for (const entry of entries) {
         await client.query(
-            'insert into reservations (sku, order_id, quantity, reason) values ($1, $2, $3, $4)',
-            [entry.sku, entry.orderId, entry.quantity, entry.reason]
+            `insert into reservations (merchant_id, sku, order_id, quantity, reason)
+             values ($1, $2, $3, $4, $5)`,
+            [merchantId, entry.sku, entry.orderId, entry.quantity, entry.reason]
         );
     }
 };
 
 const applyPhysicalDelta = async (
     client: pg.PoolClient,
+    merchantId: string,
     sku: string,
     delta: number
 ): Promise<void> => {
     if (delta === 0) return;
-    await client.query('update stock set physical = physical + $2 where sku = $1', [sku, delta]);
+    await client.query(
+        'update stock set physical = physical + $3 where merchant_id = $1 and sku = $2',
+        [merchantId, sku, delta]
+    );
 };
 
 const errorCode = (error: unknown): string | undefined =>
@@ -160,16 +189,26 @@ const runCommand = async (
             // only if what it describes does.
             if (idempotency) await claimKey(client, idempotency);
 
-            const stock = await readStock(client, command.sku, strategy === 'row_lock');
-            const entries = await readEntries(client, command.sku);
+            const stock = await readStock(
+                client,
+                command.merchantId,
+                command.sku,
+                strategy === 'row_lock'
+            );
+            const entries = await readEntries(client, command.merchantId, command.sku);
             const result = decide(stock, entries);
 
             // A rejection is an answer, so it is recorded and replayed like any
             // other. Retrying a request that was refused for lack of stock
             // should not quietly succeed later because stock arrived.
             if (result.ok) {
-                await appendEntries(client, result.entries);
-                await applyPhysicalDelta(client, command.sku, result.physicalDelta);
+                await appendEntries(client, command.merchantId, result.entries);
+                await applyPhysicalDelta(
+                    client,
+                    command.merchantId,
+                    command.sku,
+                    result.physicalDelta
+                );
             }
             if (idempotency) await recordResult(client, idempotency, result);
 
