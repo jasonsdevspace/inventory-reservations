@@ -369,6 +369,26 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
     return {
         strategy,
 
+        /**
+         * One SKU's stock and ledger, for a caller reporting on them.
+         *
+         * Repeatable read, so both statements see the same snapshot. Under
+         * read committed each takes its own, and a shipment committing between
+         * them could be half seen, physical stock from before it and the
+         * compensating entry from after, overstating salable quantity.
+         */
+        readInventory: (merchantId: string, sku: string) =>
+            withTenant(
+                pool,
+                merchantId,
+                async (client) => {
+                    const stock = await readStock(client, merchantId, sku, false);
+                    if (!stock) return undefined;
+                    return { stock, entries: await readEntries(client, merchantId, sku) };
+                },
+                'repeatable read'
+            ),
+
         placeOrder: (
             command: Command,
             policy: OversellPolicy,

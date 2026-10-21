@@ -2,10 +2,9 @@ import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } f
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
 import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
-import { withTenant } from '../postgres/pool.js';
 import { createStore, type Outcome, type Strategy } from '../postgres/store.js';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
-import type { LedgerEntry, OversellPolicy, Rejection } from '../domain/types.js';
+import type { OversellPolicy, Rejection } from '../domain/types.js';
 
 /**
  * HTTP in front of the store.
@@ -327,35 +326,17 @@ export const createServer = ({
 
     app.get<{ Params: { sku: string } }>('/inventory/:sku', async (request, response) => {
         const { sku } = request.params;
-        const merchantId = request.merchant.id;
+        const inventory = await store.readInventory(request.merchant.id, sku);
 
-        // Read inside a transaction that declares its tenant, because row
-        // level security takes the merchant from a transaction local setting.
-        // A query issued outside one has no tenancy and finds nothing, which
-        // is the right way for it to fail.
-        const { physical, entries } = await withTenant(pool, merchantId, async (client) => {
-            const stock = await client.query<{ physical: number }>(
-                'select physical from stock where merchant_id = $1 and sku = $2',
-                [merchantId, sku]
-            );
-            const ledger = await client.query<{ quantity: number }>(
-                'select quantity from reservations where merchant_id = $1 and sku = $2',
-                [merchantId, sku]
-            );
-            return {
-                physical: stock.rows[0]?.physical,
-                entries: ledger.rows as Pick<LedgerEntry, 'quantity'>[] as LedgerEntry[],
-            };
-        });
-
-        if (physical === undefined) {
+        if (!inventory) {
             return response.status(404).send({ error: { kind: 'unknown_sku', sku } });
         }
+        const { stock, entries } = inventory;
         return response.send({
             sku,
-            physical,
+            physical: stock.physical,
             reserved: netReservations(entries),
-            salable: salableQuantity({ sku, physical }, entries, policy),
+            salable: salableQuantity(stock, entries, policy),
         });
     });
 
