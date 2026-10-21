@@ -5,7 +5,11 @@
 # the attack surface is the Node runtime and this application rather than a
 # general purpose Linux userland.
 
-FROM node:24-alpine AS build
+# Built on Debian 12, the release the distroless runtime is based on. Alpine
+# uses musl rather than glibc, and a native dependency compiled against one
+# fails to load against the other. Nothing here is native today, which is why
+# the mismatch worked, and why it would have broken the day something was.
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -15,7 +19,7 @@ RUN npm run build
 
 # Production dependencies only, resolved separately so the dev toolchain never
 # reaches the final image.
-FROM node:24-alpine AS dependencies
+FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
@@ -26,6 +30,9 @@ ENV NODE_ENV=production
 
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# Declares the compiled output as ES modules. Without it Node has to detect the
+# module type from syntax on every load rather than being told.
+COPY package.json ./
 # SQL is read at runtime by the migration step, so it has to sit beside the
 # compiled module that reads it rather than only in the source tree. Copied as
 # a group, because naming files individually means the next one gets forgotten.
