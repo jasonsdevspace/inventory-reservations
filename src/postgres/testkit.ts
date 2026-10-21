@@ -2,9 +2,17 @@ import type pg from 'pg';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
 import type { CommandResult, LedgerEntry, OversellPolicy } from '../domain/types.js';
 import { createMerchant } from './merchants.js';
+import { migrate } from './migrate.js';
 import type { Outcome } from './store.js';
 
-/** Helpers shared by the integration tests. Not part of the shipped surface. */
+/**
+ * Helpers shared by the integration tests. Not part of the shipped surface.
+ *
+ * Fixtures are created through the owner pool, because the application role
+ * deliberately cannot insert merchants or create schema. Behaviour under test
+ * runs through the application pool, so the tests exercise the same privileges
+ * and policies production does rather than a privileged shortcut.
+ */
 
 /**
  * Unwraps the command result from a store outcome.
@@ -18,6 +26,16 @@ export const resultOf = (outcome: Outcome): CommandResult => {
         throw new Error(`expected a result, got ${outcome.kind}`);
     }
     return outcome.result;
+};
+
+/**
+ * Prepares a database for the suite.
+ *
+ * Applies the schema, the application role and the policies, exactly as a
+ * deployment would.
+ */
+export const prepareDatabase = async (owner: pg.Pool): Promise<void> => {
+    await migrate(owner, { appPassword: 'reservations_app' });
 };
 
 export const resetDatabase = async (pool: pg.Pool): Promise<void> => {
@@ -77,6 +95,14 @@ export interface LedgerState {
     readonly entries: readonly LedgerEntry[];
 }
 
+/**
+ * Reads the derived state for one SKU.
+ *
+ * Takes the owner pool, which is not subject to the policies, so a test can
+ * assert what is actually in the database rather than what one tenant is
+ * permitted to see. Tests about what a tenant can see go through the
+ * application pool instead.
+ */
 export const readState = async (
     pool: pg.Pool,
     merchantId: string,
