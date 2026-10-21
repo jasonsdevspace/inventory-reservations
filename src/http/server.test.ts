@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -55,7 +56,7 @@ const place = (body: unknown, key?: string, auth = apiKey) =>
         payload: body as object,
         headers: {
             'x-api-key': auth,
-            ...(key ? { 'idempotency-key': key } : {}),
+            ...(key !== undefined ? { 'idempotency-key': key } : {}),
         },
     });
 
@@ -110,6 +111,78 @@ describe('placing an order', () => {
     });
 });
 
+describe('writing against a sku that does not exist', () => {
+    it.each([
+        ['placing', '/orders', { sku: 'NOPE', orderId: 'o-1', quantity: 1 }],
+        ['shipping', '/orders/o-1/shipments', { sku: 'NOPE', quantity: 1 }],
+        ['cancelling', '/orders/o-1/cancellations', { sku: 'NOPE', quantity: 1 }],
+    ])(
+        'answers not found when %s, as a read does, rather than failing',
+        async (_label, url, body) => {
+            const response = await post(url, body);
+            expect(response.statusCode).toBe(404);
+            expect(response.json()).toEqual({ error: { kind: 'unknown_sku', sku: 'NOPE' } });
+        }
+    );
+
+    it('does not keep the answer against an idempotency key', async () => {
+        // Not found describes the catalog at that moment rather than an
+        // outcome, so replaying it would refuse the order forever after the
+        // SKU is created.
+        const order = { sku: 'LATER', orderId: 'o-1', quantity: 1 };
+        expect((await place(order, 'k-later')).statusCode).toBe(404);
+
+        await seedStock(owner, merchantId, 'LATER', 5);
+        const retry = await place(order, 'k-later');
+        expect(retry.statusCode).toBe(201);
+        expect(retry.headers['idempotency-replayed']).toBe('false');
+    });
+});
+
+describe('limits on identifiers', () => {
+    /*
+     * An idempotency key long enough to exceed the btree entry limit used to
+     * reach Postgres and come back as a 500. Identifiers are bounded at the
+     * edge instead, where the answer can be a 400.
+     */
+    it('refuses an over long idempotency key rather than failing on the index', async () => {
+        // Random rather than repeated, because Postgres compresses index entries
+        // and a repeated character would fit under the limit it is meant to hit.
+        const key = randomBytes(1600).toString('hex');
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, key);
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: { kind: 'bad_request' } });
+    });
+
+    it('accepts a key at the limit', async () => {
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, 'k'.repeat(255));
+        expect(response.statusCode).toBe(201);
+    });
+
+    it('refuses a key that is present but empty', async () => {
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, '');
+        expect(response.statusCode).toBe(400);
+    });
+
+    it.each([
+        ['a sku', { sku: 's'.repeat(101), orderId: 'o-1', quantity: 1 }],
+        ['an order id', { sku, orderId: 'o'.repeat(101), quantity: 1 }],
+    ])('refuses %s longer than a path parameter can carry', async (_label, body) => {
+        expect((await place(body)).statusCode).toBe(400);
+    });
+
+    it('can ship an order whose id is at the limit', async () => {
+        // The order id travels in the shipment path, so it is bounded to what
+        // a path parameter accepts. Anything longer could be placed and then
+        // never shipped or canceled.
+        const orderId = 'o'.repeat(100);
+        expect((await place({ sku, orderId, quantity: 1 })).statusCode).toBe(201);
+        expect((await post(`/orders/${orderId}/shipments`, { sku, quantity: 1 })).statusCode).toBe(
+            201
+        );
+    });
+});
+
 describe('reading inventory', () => {
     it('derives salable quantity from stock and the ledger', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
@@ -159,7 +232,9 @@ describe('idempotency over HTTP', () => {
         await place(order, 'k-1');
         const second = await place(order, 'k-1');
 
-        expect(second.statusCode).toBe(200);
+        // The first answer, status included. The header is what says it is
+        // a replay, so the status does not have to say it a second time.
+        expect(second.statusCode).toBe(201);
         expect(second.headers['idempotency-replayed']).toBe('true');
 
         const inventory = await get(`/inventory/${sku}`);
@@ -186,12 +261,15 @@ describe('idempotency over HTTP', () => {
         await prewarmPool(pool, 6);
         const responses = await Promise.all(Array.from({ length: 6 }, () => place(order, 'k-1')));
 
-        const created = responses.filter((response) => response.statusCode === 201);
-        expect(created).toHaveLength(1);
+        const fresh = responses.filter(
+            (response) => response.headers['idempotency-replayed'] === 'false'
+        );
+        expect(fresh).toHaveLength(1);
+        expect(fresh[0]?.statusCode).toBe(201);
         responses
-            .filter((response) => response.statusCode !== 201)
+            .filter((response) => response.headers['idempotency-replayed'] !== 'false')
             .forEach((response) => {
-                expect([200, 409]).toContain(response.statusCode);
+                expect([201, 409]).toContain(response.statusCode);
             });
 
         const inventory = await get(`/inventory/${sku}`);
@@ -210,6 +288,17 @@ describe('probes', () => {
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({ status: 'ok' });
     });
+
+    it.each(['/health?probe=1', '/ready?ts=123'])(
+        'answers %s without a key, query string and all',
+        async (url) => {
+            // Load balancers and uptime checks append query strings. Matching
+            // the raw URL made the probe demand a key, and an orchestrator
+            // would decide the instance never became ready.
+            const response = await app.inject({ method: 'GET', url });
+            expect(response.statusCode).toBe(200);
+        }
+    );
 
     it('answers readiness without a key', async () => {
         const response = await app.inject({ method: 'GET', url: '/ready' });
@@ -241,9 +330,46 @@ describe('probes', () => {
         await dead.end();
     });
 
+    it('reports not ready promptly when the database stops answering', async () => {
+        // Packets to this address go nowhere, so nothing refuses the
+        // connection. Without a deadline the probe waited as long as the
+        // database did, which for a stalled server is forever.
+        const stalled = createAppPool({
+            connectionString: 'postgres://nobody:nobody@192.0.2.1:5432/none',
+        });
+        const server = createServer({
+            pool: stalled,
+            strategy: 'row_lock',
+            policy: { kind: 'strict' },
+            logLevel: false,
+        });
+        await server.ready();
+        const started = Date.now();
+
+        const readiness = await server.inject({ method: 'GET', url: '/ready' });
+
+        expect(readiness.statusCode).toBe(503);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        await server.close();
+        await stalled.end();
+    }, 10_000);
+
     it('returns a request identifier a caller can quote', async () => {
         const response = await get(`/inventory/${sku}`);
         expect(response.headers['x-request-id']).toBeTruthy();
+    });
+});
+
+describe('a route that does not exist', () => {
+    it('answers in the same shape as every other error', async () => {
+        const response = await get('/nope');
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({ error: { kind: 'not_found' } });
+    });
+
+    it('still asks for a key first, so routes are not discoverable without one', async () => {
+        const response = await app.inject({ method: 'GET', url: '/nope' });
+        expect(response.statusCode).toBe(401);
     });
 });
 
@@ -322,7 +448,7 @@ describe('policy configuration', () => {
 
 describe('contention', () => {
     /*
-     * Heavy serialisation conflict is a capacity condition, not a client
+     * Heavy serialization conflict is a capacity condition, not a client
      * mistake. CI found this the hard way: five concurrent cancellations under
      * the serializable strategy exhausted the retry budget and the raw
      * Postgres error escaped, which would have reached a caller as a 500

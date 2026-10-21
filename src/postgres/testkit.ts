@@ -9,7 +9,7 @@ import type { Outcome } from './store.js';
  * Helpers shared by the integration tests. Not part of the shipped surface.
  *
  * Fixtures are created through the owner pool, because the application role
- * deliberately cannot insert merchants or create schema. Behaviour under test
+ * deliberately cannot insert merchants or create schema. Behavior under test
  * runs through the application pool, so the tests exercise the same privileges
  * and policies production does rather than a privileged shortcut.
  */
@@ -64,11 +64,11 @@ export const seedMerchant = async (
  * arrive staggered by setup latency and each one commits before the next
  * reads. Measured on this suite: twelve simultaneous orders against one unit
  * admitted exactly one with no concurrency control at all, which looks like
- * correct behaviour and is nothing of the kind.
+ * correct behavior and is nothing of the kind.
  *
- * With the pool warm the same twelve attempts overlap properly and eleven or
- * twelve of them succeed. That is the contention the strategies have to
- * survive.
+ * With the pool warm the same twelve attempts overlap properly and nearly all
+ * of them succeed, typically eleven. That is the contention the strategies have
+ * to survive.
  */
 export const prewarmPool = async (pool: pg.Pool, count: number): Promise<void> => {
     const clients = await Promise.all(Array.from({ length: count }, () => pool.connect()));

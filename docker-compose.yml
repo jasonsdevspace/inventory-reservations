@@ -1,18 +1,12 @@
 # Postgres for local development and for the integration tests.
 #
 # The test suite talks to a real database rather than a fake, because the
-# behaviour under test is the database's: row locking, isolation levels and
-# serialisation failures. A fake would prove nothing about any of them.
+# behavior under test is the database's: row locking, isolation levels and
+# serialization failures. A fake would prove nothing about any of them.
 #
 #   docker compose up -d
 #   npm run verify
 services:
-    # The service itself, built from the Dockerfile in this directory.
-    #
-    # Running `docker compose up` gives a developer the API and its database
-    # with no local Node or Postgres installed. The test suite talks to the
-    # database directly and does not need this service, so it is here for
-    # trying the thing rather than for the suite.
     # Migrations are a deployment step, not something the service does to
     # itself on startup. This runs as the owner, applies the schema, the
     # application role, its grants and the row level policies, then exits. The
@@ -30,6 +24,12 @@ services:
                 condition: service_healthy
         restart: 'no'
 
+    # The service itself, built from the Dockerfile in this directory.
+    #
+    # Running `docker compose up` gives a developer the API and its database
+    # with no local Node or Postgres installed. The test suite talks to the
+    # database directly and does not need this service, so it is here for
+    # trying the thing rather than for the suite.
     api:
         build: .
         environment:
