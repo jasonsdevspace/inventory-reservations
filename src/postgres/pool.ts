@@ -63,6 +63,35 @@ export const createAppPool = (overrides: pg.PoolConfig = {}): pg.Pool =>
     withErrorHandling(new Pool({ connectionString: appConnectionString(), ...overrides }), 'app');
 
 /**
+ * Refuses to continue as a role that row level security does not bind.
+ *
+ * The policies do not apply to a table's owner, to a superuser, or to a role
+ * with BYPASSRLS. Connecting the service as any of them switches the tenancy
+ * backstop off without an error, and nothing downstream would notice, so the
+ * service checks once at startup and declines to serve rather than serving
+ * without it.
+ */
+export const assertBoundByRowLevelSecurity = async (pool: pg.Pool): Promise<void> => {
+    const { rows } = await pool.query<{ role: string; bypasses: boolean }>(
+        `select r.rolname as role,
+                r.rolsuper or r.rolbypassrls or exists (
+                    select 1 from pg_class c
+                    where c.relowner = r.oid
+                      and c.relnamespace = 'public'::regnamespace
+                      and c.relname in ('stock', 'reservations', 'idempotency_keys')
+                ) as bypasses
+         from pg_roles r
+         where r.rolname = current_user`
+    );
+    const row = rows[0];
+    if (!row || row.bypasses) {
+        throw new Error(
+            `refusing to run as ${row?.role ?? 'an unknown role'}, which row level security does not apply to`
+        );
+    }
+};
+
+/**
  * Runs a read inside a transaction that declares whose data it is.
  *
  * Row level security reads the merchant from a transaction local setting, so a
