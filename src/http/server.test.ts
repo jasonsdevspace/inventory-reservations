@@ -314,6 +314,30 @@ describe('probes', () => {
         await dead.end();
     });
 
+    it('reports not ready promptly when the database stops answering', async () => {
+        // Packets to this address go nowhere, so nothing refuses the
+        // connection. Without a deadline the probe waited as long as the
+        // database did, which for a stalled server is forever.
+        const stalled = createAppPool({
+            connectionString: 'postgres://nobody:nobody@192.0.2.1:5432/none',
+        });
+        const server = createServer({
+            pool: stalled,
+            strategy: 'row_lock',
+            policy: { kind: 'strict' },
+            logLevel: false,
+        });
+        await server.ready();
+        const started = Date.now();
+
+        const readiness = await server.inject({ method: 'GET', url: '/ready' });
+
+        expect(readiness.statusCode).toBe(503);
+        expect(Date.now() - started).toBeLessThan(2_000);
+        await server.close();
+        await stalled.end();
+    }, 10_000);
+
     it('returns a request identifier a caller can quote', async () => {
         const response = await get(`/inventory/${sku}`);
         expect(response.headers['x-request-id']).toBeTruthy();

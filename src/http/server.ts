@@ -45,6 +45,23 @@ const BODY_LIMIT_BYTES = 16 * 1024;
  * which came back as a 500.
  */
 const MAX_PATH_IDENTIFIER = 100;
+
+/**
+ * How long readiness waits before answering no.
+ *
+ * Shorter than the pool's own limits, because an orchestrator probes on a
+ * schedule and a probe that takes longer than its interval is a probe that
+ * reports nothing useful.
+ */
+const READINESS_DEADLINE_MS = 1_000;
+
+const withinDeadline = <T>(work: Promise<T>, ms: number): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    const expiry = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`no answer within ${ms}ms`)), ms);
+    });
+    return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+};
 const MAX_IDEMPOTENCY_KEY = 255;
 
 const identifier = { type: 'string', minLength: 1, maxLength: MAX_PATH_IDENTIFIER } as const;
@@ -236,7 +253,7 @@ export const createServer = ({
 
     app.get('/ready', async (_request, response) => {
         try {
-            await pool.query('select 1');
+            await withinDeadline(pool.query('select 1'), READINESS_DEADLINE_MS);
             return { status: 'ready' };
         } catch {
             return response.status(503).send({ status: 'not_ready' });
