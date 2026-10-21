@@ -61,11 +61,32 @@ const idempotencyFrom = (
     key ? { merchantId, key, endpoint, requestHash: hashRequest(payload) } : undefined;
 
 /** Turns a store outcome into a response. */
-const reply = (
+/**
+ * Maps a store outcome onto a status, a body and any headers it needs.
+ *
+ * Exported so the mapping can be tested directly. Some outcomes, contention in
+ * particular, cannot be manufactured on demand through the API, and the
+ * mapping is the part worth pinning anyway.
+ */
+export const responseFor = (
     outcome: Outcome,
     successStatus: number
-): { status: number; body: unknown; replayed: boolean } => {
+): { status: number; body: unknown; replayed: boolean; retryAfterSeconds?: number } => {
     switch (outcome.kind) {
+        case 'contention':
+            /*
+             * The retry budget ran out under serialisation conflicts.
+             *
+             * 503 rather than 500, because nothing is broken and the request
+             * is worth repeating. 429 would be wrong as well, since the client
+             * has not been sending too much, the row has.
+             */
+            return {
+                status: 503,
+                body: { error: { kind: 'contention' } },
+                replayed: false,
+                retryAfterSeconds: 1,
+            };
         case 'key_reused':
             return {
                 status: 422,
@@ -118,7 +139,10 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
     const store = createStore(pool, strategy);
 
     const send = (response: FastifyReply, outcome: Outcome, successStatus: number) => {
-        const { status, body, replayed } = reply(outcome, successStatus);
+        const { status, body, replayed, retryAfterSeconds } = responseFor(outcome, successStatus);
+        if (retryAfterSeconds !== undefined) {
+            void response.header('Retry-After', String(retryAfterSeconds));
+        }
         // Lets a client tell a fresh result from a replayed one without
         // inspecting the body, which matters when the two are identical.
         void response.header('Idempotency-Replayed', String(replayed));

@@ -79,6 +79,16 @@ The two correct strategies differ in how they pay for correctness. `row_lock` ma
 placements for a SKU queue. `serializable` lets them all proceed and makes the losers retry.
 Which is preferable depends on contention, and that is measured rather than asserted.
 
+Retries are bounded and spaced. Repeating a serialisation conflict immediately tends to collide
+with the same transactions that caused it, and without jitter contending clients retry in lockstep
+and conflict again together. Past the budget the caller gets a **503** with `Retry-After` rather
+than a driver error, because contention this heavy is a capacity condition and not a client
+mistake.
+
+That path exists because CI found it. Five concurrent cancellations under `serializable` exhausted
+a five attempt budget with no backoff, and the raw Postgres error escaped to the caller. It would
+have reached a client as a 500 carrying the name of a database source file.
+
 ### Making the race real
 
 The first version of the concurrency tests passed against every strategy, including `none`. They

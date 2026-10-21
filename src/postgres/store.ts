@@ -34,7 +34,25 @@ export type Strategy = 'none' | 'row_lock' | 'serializable';
 /** Postgres raises this when a serializable transaction loses a conflict. */
 const SERIALIZATION_FAILURE = '40001';
 
-const MAX_ATTEMPTS = 5;
+/**
+ * Retry budget for serialisation conflicts.
+ *
+ * Eight rather than five, with backoff between attempts. Retrying a
+ * serialisation conflict immediately tends to re-collide with the same
+ * transactions that caused it, so the attempts are spaced out and jittered.
+ * Without the jitter, contending clients retry in lockstep and conflict again
+ * together.
+ */
+const MAX_ATTEMPTS = 8;
+const BASE_BACKOFF_MS = 5;
+const MAX_BACKOFF_MS = 200;
+
+const backoffFor = (attempt: number): number => {
+    const exponential = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+    return Math.round(exponential * (0.5 + Math.random()));
+};
+
+const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface Command {
     /**
@@ -67,7 +85,17 @@ export type Outcome =
     | { readonly kind: 'applied'; readonly result: CommandResult }
     | { readonly kind: 'replayed'; readonly result: CommandResult }
     | { readonly kind: 'in_flight' }
-    | { readonly kind: 'key_reused' };
+    | { readonly kind: 'key_reused' }
+    /**
+     * The retry budget ran out.
+     *
+     * Contention this heavy is a capacity problem rather than a client
+     * mistake, and the caller is being asked to come back rather than told it
+     * did something wrong. Leaking the driver error instead would turn a
+     * recoverable condition into a 500 carrying the name of a Postgres source
+     * file.
+     */
+    | { readonly kind: 'contention' };
 
 const readStock = async (
     client: pg.PoolClient,
@@ -171,6 +199,82 @@ const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Pro
  * is only responsible for reading a consistent view, writing the result, and
  * deciding what "consistent" is allowed to mean.
  */
+/**
+ * One attempt, either finished or asking to be repeated.
+ *
+ * Splitting an attempt from the retry loop keeps connection handling in one
+ * place. The connection is released as the attempt unwinds, so the backoff
+ * never happens with one checked out, which is how a pool starves under
+ * exactly the contention this exists for.
+ */
+type Attempt = { readonly done: true; readonly outcome: Outcome } | { readonly done: false };
+
+const runAttempt = async (
+    pool: pg.Pool,
+    strategy: Strategy,
+    command: Command,
+    decide: (stock: Stock, entries: readonly LedgerEntry[]) => CommandResult,
+    idempotency: IdempotencyContext | undefined
+): Promise<Attempt> => {
+    const client = await pool.connect();
+    try {
+        await client.query(
+            strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
+        );
+
+        // Claimed inside the same transaction as the work, so a key exists
+        // only if what it describes does.
+        if (idempotency) await claimKey(client, idempotency);
+
+        const stock = await readStock(
+            client,
+            command.merchantId,
+            command.sku,
+            strategy === 'row_lock'
+        );
+        const entries = await readEntries(client, command.merchantId, command.sku);
+        const result = decide(stock, entries);
+
+        if (result.ok) {
+            await appendEntries(client, command.merchantId, result.entries);
+            await applyPhysicalDelta(client, command.merchantId, command.sku, result.physicalDelta);
+        }
+        if (idempotency) await recordResult(client, idempotency, result);
+
+        // A rejected command writes nothing, so without a key there is nothing
+        // to keep and the transaction rolls back. With a key the rejection
+        // itself is worth keeping, so the retry gets the same answer rather
+        // than a fresh evaluation against newer stock.
+        const shouldCommit = result.ok || idempotency !== undefined;
+        await client.query(shouldCommit ? 'commit' : 'rollback');
+        return { done: true, outcome: { kind: 'applied', result } };
+    } catch (error) {
+        await client.query('rollback').catch(() => undefined);
+
+        // The key was already claimed, so this request duplicates one that has
+        // run or is still running.
+        if (idempotency && errorCode(error) === UNIQUE_VIOLATION) {
+            return { done: true, outcome: await resolveDuplicate(pool, idempotency) };
+        }
+
+        // Another transaction won the race. Nothing was applied, so replaying
+        // the work is safe and the repeat sees the winner's effect.
+        if (isSerializationFailure(error)) return { done: false };
+
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * Runs one decision, repeating it while the database says somebody else got
+ * there first.
+ *
+ * Past the budget the caller is asked to come back rather than handed a driver
+ * error, because contention that heavy is a capacity condition and not a
+ * client mistake.
+ */
 const runCommand = async (
     pool: pg.Pool,
     strategy: Strategy,
@@ -179,61 +283,12 @@ const runCommand = async (
     idempotency?: IdempotencyContext
 ): Promise<Outcome> => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-        const client = await pool.connect();
-        try {
-            await client.query(
-                strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
-            );
-
-            // Claimed inside the same transaction as the work, so a key exists
-            // only if what it describes does.
-            if (idempotency) await claimKey(client, idempotency);
-
-            const stock = await readStock(
-                client,
-                command.merchantId,
-                command.sku,
-                strategy === 'row_lock'
-            );
-            const entries = await readEntries(client, command.merchantId, command.sku);
-            const result = decide(stock, entries);
-
-            // A rejection is an answer, so it is recorded and replayed like any
-            // other. Retrying a request that was refused for lack of stock
-            // should not quietly succeed later because stock arrived.
-            if (result.ok) {
-                await appendEntries(client, command.merchantId, result.entries);
-                await applyPhysicalDelta(
-                    client,
-                    command.merchantId,
-                    command.sku,
-                    result.physicalDelta
-                );
-            }
-            if (idempotency) await recordResult(client, idempotency, result);
-
-            // A rejected command writes nothing, so without a key there is
-            // nothing to keep and the transaction rolls back. With a key the
-            // rejection itself is worth keeping, so the retry gets the same
-            // answer rather than a fresh evaluation against newer stock.
-            const shouldCommit = result.ok || idempotency !== undefined;
-            await client.query(shouldCommit ? 'commit' : 'rollback');
-            return { kind: 'applied', result };
-        } catch (error) {
-            await client.query('rollback').catch(() => undefined);
-            // A serialization failure means another transaction won the race.
-            // The work was never applied, so replaying it is safe and the
-            // retry sees the winner's effect.
-            if (idempotency && errorCode(error) === UNIQUE_VIOLATION) {
-                return resolveDuplicate(pool, idempotency);
-            }
-            if (isSerializationFailure(error) && attempt < MAX_ATTEMPTS) continue;
-            throw error;
-        } finally {
-            client.release();
-        }
+        const result = await runAttempt(pool, strategy, command, decide, idempotency);
+        if (result.done) return result.outcome;
+        if (attempt < MAX_ATTEMPTS) await pause(backoffFor(attempt));
     }
-    throw new Error(`gave up after ${MAX_ATTEMPTS} serialization failures`);
+
+    return { kind: 'contention' };
 };
 
 export const createStore = (pool: pg.Pool, strategy: Strategy) => ({
