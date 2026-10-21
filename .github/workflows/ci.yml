@@ -17,9 +17,9 @@ jobs:
     verify:
         runs-on: ubuntu-latest
 
-        # The integration tests talk to a real Postgres, because the behaviour
+        # The integration tests talk to a real Postgres, because the behavior
         # under test belongs to the database: row locking, isolation levels and
-        # serialisation failures. The health check matters, since the suite
+        # serialization failures. The health check matters, since the suite
         # starts querying as soon as the job does.
         services:
             postgres:

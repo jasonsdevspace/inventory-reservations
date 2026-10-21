@@ -6,5 +6,6 @@
 -- against a database somebody has been poking at prove less than they appear
 -- to.
 --
--- Runs once, when the Postgres volume is first initialised.
+-- Runs whenever Postgres initializes its data directory, which with the
+-- in-memory data directory compose uses is every fresh start of the container.
 create database reservations_test;

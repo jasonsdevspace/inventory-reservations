@@ -126,7 +126,7 @@ describe('writing against a sku that does not exist', () => {
     );
 
     it('does not keep the answer against an idempotency key', async () => {
-        // Not found describes the catalogue at that moment rather than an
+        // Not found describes the catalog at that moment rather than an
         // outcome, so replaying it would refuse the order forever after the
         // SKU is created.
         const order = { sku: 'LATER', orderId: 'o-1', quantity: 1 };
@@ -174,7 +174,7 @@ describe('limits on identifiers', () => {
     it('can ship an order whose id is at the limit', async () => {
         // The order id travels in the shipment path, so it is bounded to what
         // a path parameter accepts. Anything longer could be placed and then
-        // never shipped or cancelled.
+        // never shipped or canceled.
         const orderId = 'o'.repeat(100);
         expect((await place({ sku, orderId, quantity: 1 })).statusCode).toBe(201);
         expect((await post(`/orders/${orderId}/shipments`, { sku, quantity: 1 })).statusCode).toBe(
@@ -448,7 +448,7 @@ describe('policy configuration', () => {
 
 describe('contention', () => {
     /*
-     * Heavy serialisation conflict is a capacity condition, not a client
+     * Heavy serialization conflict is a capacity condition, not a client
      * mistake. CI found this the hard way: five concurrent cancellations under
      * the serializable strategy exhausted the retry budget and the raw
      * Postgres error escaped, which would have reached a caller as a 500

@@ -11,7 +11,8 @@ export default defineConfig({
          * It truncates and reseeds between cases, so pointing it at the one
          * the service is serving from means running the tests rewrites
          * whatever the demo was showing. Created by
-         * `docker/init-test-db.sql` when the Postgres volume is initialised.
+         * `docker/init-test-db.sql` whenever Postgres initializes its data
+         * directory.
          */
         env: {
             DATABASE_URL:
