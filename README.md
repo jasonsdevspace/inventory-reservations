@@ -126,6 +126,60 @@ The model depends on compensation rather than mutation. A cancellation adds a po
 does not remove the negative one. Allowing an update would let a caller quietly erase the evidence
 an audit or a reconciliation run depends on.
 
+## The API
+
+|                                  |                                                 |
+| -------------------------------- | ----------------------------------------------- |
+| `GET /inventory/:sku`            | Physical, reserved and derived salable quantity |
+| `POST /orders`                   | Commit stock to an order                        |
+| `POST /orders/:id/shipments`     | Ship, in whole or in part                       |
+| `POST /orders/:id/cancellations` | Release, in whole or in part                    |
+| `GET /health`                    | Liveness                                        |
+
+```
+$ curl -s localhost:8080/inventory/DEMO-1
+{"sku":"DEMO-1","physical":5,"reserved":0,"salable":5}
+
+$ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
+    -H 'idempotency-key: abc' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
+{"entries":[{"sku":"DEMO-1","orderId":"o-1","quantity":-2,"reason":"order_placed"}],"physicalDelta":0}
+
+$ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
+    -d '{"sku":"DEMO-1","orderId":"o-2","quantity":10}'
+{"error":{"kind":"insufficient_salable","requested":10,"available":3}}
+```
+
+A rejection is a **409**, not a 400. The request was understood and the world does not allow it,
+which is the honest answer when stock ran out between loading a page and submitting an order. A
+400 would blame the caller for something it could not have known. A malformed request really is a
+400, including one carrying a field the API does not understand, because silently ignoring a field
+a client thought mattered is worse than refusing it.
+
+## Idempotency
+
+A client whose request times out cannot tell whether the order was placed, so it retries. Send an
+`Idempotency-Key` header and the retry returns the first answer instead of placing a second order.
+
+Three decisions, each with a plausible wrong answer:
+
+**Keys are scoped per endpoint.** The same key on `place` and on `cancel` are different keys.
+Scoping globally would let an unlucky client collide with itself across unrelated operations.
+
+**The request is fingerprinted.** A key reused with different arguments gets a **422** rather than
+a replay, because replaying would answer a question nobody asked. This is the case that turns a
+client bug into a silent data problem when it is not checked.
+
+**The key is claimed in the same transaction as the work.** Writing the key first and the order
+second leaves a window where a crash between them strands a key with no result, and every retry is
+then refused forever. Doing both atomically means a key exists only if the work it describes does.
+
+A duplicate arriving while the original is still running gets a **409**, because the honest answer
+is that the outcome is not known yet. A rejection is replayed like any other result, so a retry
+does not quietly succeed because stock arrived in the meantime.
+
+Responses carry `Idempotency-Replayed: true` or `false`, so a client can tell a fresh answer from
+a repeated one without inspecting the body.
+
 ## Design
 
 The core is pure. No database, no clock, no framework, no I/O. It takes the current stock level,
@@ -162,13 +216,22 @@ assumed unnecessary.
 
 ## Running it
 
-Requires Node 24 and Docker.
+Requires Docker. Node 24 as well if you want to run the test suite.
 
 ```bash
-docker compose up -d   # Postgres, with a health check so the suite can start immediately
+docker compose up -d --build   # the API on :8080 and Postgres behind it
+curl localhost:8080/health
+```
+
+That is the whole setup. No local Node, no local Postgres.
+
+To work on it:
+
+```bash
 npm ci
-npm run verify         # type-check, lint, format, prose, tests
-npm test               # watch mode
+npm run verify      # type-check, lint, format, prose, tests
+npm test            # watch mode
+npm run build       # compile to dist, which is what the image runs
 ```
 
 The integration tests talk to a real Postgres rather than a fake, because the behaviour under test
@@ -179,6 +242,26 @@ service, so a developer who has run compose needs no configuration at all.
 `npm run prose` fails on em dashes, semicolons joining clauses in prose, and process artifacts
 such as `TODO` markers or notes about pending decisions. Comments here explain why the code is the
 way it is. They do not track what is undone.
+
+## The container
+
+Multi-stage, ending on `gcr.io/distroless/nodejs24-debian12`. The final image has no shell, no
+package manager and no general purpose userland, so there is nothing to pivot to if the process is
+compromised. It runs as the unprivileged `nonroot` user. Dev dependencies are resolved in a
+separate stage and never reach it.
+
+Configuration is environment only, so the same image runs locally and in production with no
+rebuild.
+
+|                        |                                          |                 |
+| ---------------------- | ---------------------------------------- | --------------- |
+| `DATABASE_URL`         | connection string                        | compose service |
+| `PORT`                 | listen port                              | `8080`          |
+| `CONCURRENCY_STRATEGY` | `none`, `row_lock` or `serializable`     | `row_lock`      |
+| `OVERSELL_POLICY`      | `strict`, `threshold:N` or `backorder:N` | `strict`        |
+
+`OVERSELL_POLICY` is server configuration rather than a request parameter. Letting a caller choose
+would make `backorder` something anyone could ask for.
 
 ## License
 
