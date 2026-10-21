@@ -16,6 +16,29 @@ concurrency:
 jobs:
     verify:
         runs-on: ubuntu-latest
+
+        # The integration tests talk to a real Postgres, because the behaviour
+        # under test belongs to the database: row locking, isolation levels and
+        # serialisation failures. The health check matters, since the suite
+        # starts querying as soon as the job does.
+        services:
+            postgres:
+                image: postgres:18-alpine
+                env:
+                    POSTGRES_USER: reservations
+                    POSTGRES_PASSWORD: reservations
+                    POSTGRES_DB: reservations
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd "pg_isready -U reservations -d reservations"
+                    --health-interval 2s
+                    --health-timeout 3s
+                    --health-retries 15
+
+        env:
+            DATABASE_URL: postgres://reservations:reservations@localhost:5432/reservations
+
         steps:
             - name: Checkout
               uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

@@ -56,17 +56,42 @@ Two checkouts can evaluate the same ledger at the same moment, both compute a sa
 one, both be told yes, and both append. The ledger will record the oversell faithfully, because
 recording is all it was ever able to do.
 
-This is pinned as a test rather than left as a claim:
+That is not an argument in this repository, it is a test. Twelve simultaneous orders are fired at
+one unit of stock with the concurrency control removed, and **eleven or twelve of them succeed**.
 
-```
-the ledger does not prevent an oversell on its own
-  lets two concurrent commitments both succeed against one unit
-  refuses the second commitment when the first one has already been appended
-```
+The ledger's job is to make damage visible and reversible. Preventing it belongs at the order
+boundary, and conflating the two is how systems end up with neither.
 
-The distinction matters. The ledger's job is to make damage visible and reversible. Preventing it
-is a separate concern belonging at the order boundary, and conflating the two is how systems end
-up with neither.
+## Protecting the order boundary
+
+Three strategies, one of which is wrong on purpose.
+
+| Strategy       | What it does                                        | Result against one unit           |
+| -------------- | --------------------------------------------------- | --------------------------------- |
+| `none`         | Nothing. Read committed, no lock                    | Oversells, 11 or 12 of 12 succeed |
+| `row_lock`     | `select ... for update` on the stock row            | Exactly one succeeds              |
+| `serializable` | Isolation level detects the conflict, loser retries | Exactly one succeeds              |
+
+`none` exists so the failure can be reproduced on demand rather than described. A test that cannot
+demonstrate the bug cannot prove the fix.
+
+The two correct strategies differ in how they pay for correctness. `row_lock` makes conflicting
+placements for a SKU queue. `serializable` lets them all proceed and makes the losers retry.
+Which is preferable depends on contention, and that is measured rather than asserted.
+
+### Making the race real
+
+The first version of the concurrency tests passed against every strategy, including `none`. They
+were worthless.
+
+Establishing a connection costs more than the whole transaction, so twelve attempts fired at once
+arrived staggered by setup latency, and each committed before the next one read. Nothing ever
+contended. Warming the pool first removes that serialisation, and the same twelve attempts then
+overlap properly.
+
+A test now guards against the suite quietly reverting to that state. It asserts that `none`
+**does** oversell under the harness, so if the attempts ever stop contending, the suite says so
+rather than reporting a safety it has not checked.
 
 ## Overselling is a policy
 
@@ -85,6 +110,21 @@ type OversellPolicy =
 A threshold lowers salable quantity, because the held back units are genuinely not for sale here.
 A backorder does not raise salable quantity, because the stock does not exist. It raises the limit
 on what may be committed, which is a different question and is kept as one.
+
+## Storage
+
+Two tables. `stock` holds physical quantity. `reservations` is the ledger.
+
+The ledger is append only, and the database enforces it rather than trusting callers. A trigger
+refuses every update and delete:
+
+```
+ERROR:  reservations is append only, use a compensating entry instead of DELETE
+```
+
+The model depends on compensation rather than mutation. A cancellation adds a positive entry, it
+does not remove the negative one. Allowing an update would let a caller quietly erase the evidence
+an audit or a reconciliation run depends on.
 
 ## Design
 
@@ -122,13 +162,19 @@ assumed unnecessary.
 
 ## Running it
 
-Requires Node 24.
+Requires Node 24 and Docker.
 
 ```bash
+docker compose up -d   # Postgres, with a health check so the suite can start immediately
 npm ci
-npm run verify      # type-check, lint, format, prose, tests
-npm test            # watch mode
+npm run verify         # type-check, lint, format, prose, tests
+npm test               # watch mode
 ```
+
+The integration tests talk to a real Postgres rather than a fake, because the behaviour under test
+belongs to the database. Row locking, isolation levels and serialisation failures cannot be
+demonstrated against a stub. `DATABASE_URL` overrides the connection, and defaults to the compose
+service, so a developer who has run compose needs no configuration at all.
 
 `npm run prose` fails on em dashes, semicolons joining clauses in prose, and process artifacts
 such as `TODO` markers or notes about pending decisions. Comments here explain why the code is the
