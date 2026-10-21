@@ -18,8 +18,11 @@ services:
         environment:
             DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
             PORT: 8080
-            CONCURRENCY_STRATEGY: row_lock
-            OVERSELL_POLICY: strict
+            # Interpolated so either can be overridden from the shell without
+            # editing this file. A hardcoded value here beats the environment
+            # and makes the documented override silently do nothing.
+            CONCURRENCY_STRATEGY: ${CONCURRENCY_STRATEGY:-row_lock}
+            OVERSELL_POLICY: ${OVERSELL_POLICY:-strict}
             # So `docker compose up` leaves something to query. A clean
             # database has no SKUs, and a service with nothing in it cannot be
             # seen working.
@@ -47,6 +50,10 @@ services:
             interval: 2s
             timeout: 3s
             retries: 15
+        volumes:
+            # Creates the database the test suite uses, so it never touches the
+            # one the running service is serving from.
+            - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
         tmpfs:
             # Test data has no reason to survive a restart, and keeping it in
             # memory makes the racing tests considerably faster to run.

@@ -37,7 +37,7 @@ jobs:
                     --health-retries 15
 
         env:
-            DATABASE_URL: postgres://reservations:reservations@localhost:5432/reservations
+            DATABASE_URL: postgres://reservations:reservations@localhost:5432/reservations_test
 
         steps:
             - name: Checkout
@@ -50,6 +50,12 @@ jobs:
               with:
                   node-version: '24'
                   cache: 'npm'
+
+            # Service containers cannot run an init script, so the database
+            # the suite uses is created here instead. Locally the same thing
+            # happens through docker/init-test-db.sql.
+            - name: Create the test database
+              run: PGPASSWORD=reservations createdb -h localhost -U reservations reservations_test
 
             - name: Install dependencies
               run: npm ci
