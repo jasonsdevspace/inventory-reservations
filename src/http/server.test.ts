@@ -110,6 +110,34 @@ describe('placing an order', () => {
     });
 });
 
+describe('writing against a sku that does not exist', () => {
+    it.each([
+        ['placing', '/orders', { sku: 'NOPE', orderId: 'o-1', quantity: 1 }],
+        ['shipping', '/orders/o-1/shipments', { sku: 'NOPE', quantity: 1 }],
+        ['cancelling', '/orders/o-1/cancellations', { sku: 'NOPE', quantity: 1 }],
+    ])(
+        'answers not found when %s, as a read does, rather than failing',
+        async (_label, url, body) => {
+            const response = await post(url, body);
+            expect(response.statusCode).toBe(404);
+            expect(response.json()).toEqual({ error: { kind: 'unknown_sku', sku: 'NOPE' } });
+        }
+    );
+
+    it('does not keep the answer against an idempotency key', async () => {
+        // Not found describes the catalogue at that moment rather than an
+        // outcome, so replaying it would refuse the order forever after the
+        // SKU is created.
+        const order = { sku: 'LATER', orderId: 'o-1', quantity: 1 };
+        expect((await place(order, 'k-later')).statusCode).toBe(404);
+
+        await seedStock(owner, merchantId, 'LATER', 5);
+        const retry = await place(order, 'k-later');
+        expect(retry.statusCode).toBe(201);
+        expect(retry.headers['idempotency-replayed']).toBe('false');
+    });
+});
+
 describe('reading inventory', () => {
     it('derives salable quantity from stock and the ledger', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
