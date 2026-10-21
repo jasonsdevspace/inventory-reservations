@@ -54,6 +54,9 @@ export const parseStrategy = (raw: string | undefined): Strategy => {
 /** Postgres raises this when a serializable transaction loses a conflict. */
 const SERIALIZATION_FAILURE = '40001';
 
+/** Postgres raises this when a wait for a lock runs past lock_timeout. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
 /**
  * Retry budget for serialisation conflicts.
  *
@@ -250,6 +253,8 @@ const runAttempt = async (
     idempotency: IdempotencyContext | undefined
 ): Promise<Attempt> => {
     const client = await pool.connect();
+    // Whether a lock wait that runs out was a wait on the key or on the work.
+    let claiming = idempotency !== undefined;
     try {
         await client.query(
             strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
@@ -267,6 +272,7 @@ const runAttempt = async (
         // Claimed inside the same transaction as the work, so a key exists
         // only if what it describes does.
         if (idempotency) await claimKey(client, idempotency);
+        claiming = false;
 
         const stock = await readStock(
             client,
@@ -308,6 +314,19 @@ const runAttempt = async (
         // Another transaction won the race. Nothing was applied, so replaying
         // the work is safe and the repeat sees the winner's effect.
         if (isSerializationFailure(error)) return { done: false };
+
+        /*
+         * A lock wait ran past lock_timeout.
+         *
+         * During the claim, the same key is held by a request that is still
+         * running, which is exactly what in flight describes. Anywhere else it
+         * is a row contended past the point where waiting would help, the
+         * condition a spent serializable retry budget reports, and it gets
+         * the same answer.
+         */
+        if (errorCode(error) === LOCK_NOT_AVAILABLE) {
+            return { done: true, outcome: { kind: claiming ? 'in_flight' : 'contention' } };
+        }
 
         throw error;
     } finally {
