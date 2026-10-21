@@ -232,7 +232,9 @@ describe('idempotency over HTTP', () => {
         await place(order, 'k-1');
         const second = await place(order, 'k-1');
 
-        expect(second.statusCode).toBe(200);
+        // The first answer, status included. The header is what says it is
+        // a replay, so the status does not have to say it a second time.
+        expect(second.statusCode).toBe(201);
         expect(second.headers['idempotency-replayed']).toBe('true');
 
         const inventory = await get(`/inventory/${sku}`);
@@ -259,12 +261,15 @@ describe('idempotency over HTTP', () => {
         await prewarmPool(pool, 6);
         const responses = await Promise.all(Array.from({ length: 6 }, () => place(order, 'k-1')));
 
-        const created = responses.filter((response) => response.statusCode === 201);
-        expect(created).toHaveLength(1);
+        const fresh = responses.filter(
+            (response) => response.headers['idempotency-replayed'] === 'false'
+        );
+        expect(fresh).toHaveLength(1);
+        expect(fresh[0]?.statusCode).toBe(201);
         responses
-            .filter((response) => response.statusCode !== 201)
+            .filter((response) => response.headers['idempotency-replayed'] !== 'false')
             .forEach((response) => {
-                expect([200, 409]).toContain(response.statusCode);
+                expect([201, 409]).toContain(response.statusCode);
             });
 
         const inventory = await get(`/inventory/${sku}`);
@@ -283,6 +288,17 @@ describe('probes', () => {
         expect(response.statusCode).toBe(200);
         expect(response.json()).toEqual({ status: 'ok' });
     });
+
+    it.each(['/health?probe=1', '/ready?ts=123'])(
+        'answers %s without a key, query string and all',
+        async (url) => {
+            // Load balancers and uptime checks append query strings. Matching
+            // the raw URL made the probe demand a key, and an orchestrator
+            // would decide the instance never became ready.
+            const response = await app.inject({ method: 'GET', url });
+            expect(response.statusCode).toBe(200);
+        }
+    );
 
     it('answers readiness without a key', async () => {
         const response = await app.inject({ method: 'GET', url: '/ready' });
@@ -341,6 +357,19 @@ describe('probes', () => {
     it('returns a request identifier a caller can quote', async () => {
         const response = await get(`/inventory/${sku}`);
         expect(response.headers['x-request-id']).toBeTruthy();
+    });
+});
+
+describe('a route that does not exist', () => {
+    it('answers in the same shape as every other error', async () => {
+        const response = await get('/nope');
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({ error: { kind: 'not_found' } });
+    });
+
+    it('still asks for a key first, so routes are not discoverable without one', async () => {
+        const response = await app.inject({ method: 'GET', url: '/nope' });
+        expect(response.statusCode).toBe(401);
     });
 });
 
