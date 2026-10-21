@@ -278,6 +278,12 @@ export const createServer = ({
         return response.status(500).send({ error: { kind: 'internal', requestId: request.id } });
     });
 
+    // The same envelope as every other error. Fastify's default echoes the
+    // method and path back and uses a shape a client parses nowhere else.
+    app.setNotFoundHandler((_request, response) =>
+        response.status(404).send({ error: { kind: 'not_found' } })
+    );
+
     // Lets a caller quote an identifier when reporting a problem, and ties
     // their report to the log line that explains it.
     app.addHook('onSend', async (request, response) => {
