@@ -6,6 +6,20 @@ export default defineConfig({
         include: ['src/**/*.test.ts'],
 
         /*
+         * The suite has its own database.
+         *
+         * It truncates and reseeds between cases, so pointing it at the one
+         * the service is serving from means running the tests rewrites
+         * whatever the demo was showing. Created by
+         * `docker/init-test-db.sql` when the Postgres volume is initialised.
+         */
+        env: {
+            DATABASE_URL:
+                process.env.DATABASE_URL ??
+                'postgres://reservations:reservations@localhost:5432/reservations_test',
+        },
+
+        /*
          * Test files run one at a time.
          *
          * The integration tests share a single Postgres and truncate between

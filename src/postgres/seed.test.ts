@@ -2,7 +2,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, createPool } from './pool.js';
 import { DEMO_STOCK, seedDemoStock } from './seed.js';
-import { resetDatabase } from './testkit.js';
+import { readState, resetDatabase } from './testkit.js';
 
 let pool: pg.Pool;
 
@@ -26,6 +26,25 @@ describe('demo stock', () => {
         expect(rows.map((row) => row.sku).sort()).toEqual(
             DEMO_STOCK.map((item) => item.sku).sort()
         );
+    });
+
+    it('shows the three quantities differing on the very first request', async () => {
+        await seedDemoStock(pool);
+        const state = await readState(pool, 'DEMO-COMMITTED');
+
+        // Ten on hand, three committed, seven to sell. The worked example from
+        // the README, true before anybody has done anything.
+        expect(state).toMatchObject({ physical: 10, net: -3, salable: 7 });
+    });
+
+    it('does not commit the demo order again when the service restarts', async () => {
+        await seedDemoStock(pool);
+        await seedDemoStock(pool);
+        await seedDemoStock(pool);
+
+        const state = await readState(pool, 'DEMO-COMMITTED');
+        expect(state.net).toBe(-3);
+        expect(state.entries).toHaveLength(1);
     });
 
     it('leaves existing stock alone when the service restarts', async () => {
