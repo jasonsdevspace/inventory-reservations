@@ -410,6 +410,58 @@ told the original was still in flight, forever, instead of being handed its answ
 caught it were passing happily the day before, because without policies an unscoped read quietly
 worked.
 
+## Operability
+
+**Liveness and readiness answer different questions.** Liveness asks whether the process should be
+restarted. Readiness asks whether it should receive traffic. Conflating them means a database
+outage either restart loops every healthy instance or leaves them all accepting requests they
+cannot serve.
+
+```
+database up      /health 200   /ready 200
+database gone    /health 200   /ready 503   process stays up, zero restarts
+database back    /health 200   /ready 200   recovers without intervention
+```
+
+Getting there took fixing a crash. An idle client that loses its connection emits an error on the
+pool, and an unhandled error event on an EventEmitter takes the process down, so losing Postgres
+for a moment did not degrade the service, it killed it. Handled at the pool rather than at each
+call site, because the point is to catch the one nobody remembered to handle.
+
+**Logs are structured and redact the credential.** An access log containing the API key that
+authorised the request turns log retention into credential retention, and anybody who can read
+logs can place orders.
+
+```json
+{"level":30,"reqId":"req-4","req":{"method":"GET","url":"/inventory/DEMO-1"},"msg":"incoming request"}
+{"level":30,"reqId":"req-4","res":{"statusCode":200},"responseTime":19.4,"msg":"request completed"}
+```
+
+Every response carries `X-Request-Id`, so a caller can quote an identifier that ties their report
+to the line explaining it.
+
+**Nothing internal reaches a client.** During the outage above, the caller received this:
+
+```json
+{ "error": { "kind": "internal", "requestId": "req-s" } }
+```
+
+The log recorded a failed password for a specific database role. The client was told none of it.
+
+**Limits are chosen rather than inherited.** A ten second request timeout, because a request that
+has not finished by then is not going to and the connection costs more than failing does. A 16KB
+body limit, well above any legitimate order and well below anything worth buffering.
+
+**Retention runs as maintenance, not as a side effect.**
+
+```bash
+npm run retention              # purges idempotency keys older than 24 hours
+IDEMPOTENCY_RETENTION='7 days' npm run retention
+```
+
+Run by a scheduler rather than by the service, because the application role has no delete
+privilege anywhere and should not acquire one so that a request handler can tidy up.
+
 ## The container
 
 Multi-stage, ending on `gcr.io/distroless/nodejs24-debian12`. The final image has no shell, no
