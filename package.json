@@ -1,0 +1,34 @@
+{
+    "name": "inventory-reservations",
+    "version": "0.1.0",
+    "private": true,
+    "description": "An append-only inventory reservation ledger, and the concurrency control it does not give you for free.",
+    "type": "module",
+    "engines": {
+        "node": ">=24"
+    },
+    "scripts": {
+        "type-check": "tsc --noEmit",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "prose": "node scripts/check-prose.mjs",
+        "test": "vitest",
+        "test:run": "vitest run",
+        "test:coverage": "vitest run --coverage",
+        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run test:run"
+    },
+    "license": "MIT",
+    "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/node": "^26.6.5",
+        "@vitest/coverage-v8": "^5.0.5",
+        "eslint": "^10.13.0",
+        "globals": "^17.13.0",
+        "prettier": "^3.9.10",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.72.0",
+        "vitest": "^5.0.5"
+    }
+}
