@@ -17,8 +17,8 @@ import type { OversellPolicy } from '../domain/types.js';
 /*
  * These talk to a real Postgres, started by `docker compose up -d`.
  *
- * The behaviour under test belongs to the database: row locking, isolation
- * levels and serialisation failures. A fake would prove nothing about any of
+ * The behavior under test belongs to the database: row locking, isolation
+ * levels and serialization failures. A fake would prove nothing about any of
  * them, so there is not one here.
  */
 

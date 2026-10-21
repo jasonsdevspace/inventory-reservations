@@ -40,7 +40,7 @@ export interface IdempotencyContext {
 /**
  * A stable fingerprint of the request arguments.
  *
- * Key order in the input does not change the hash, so a client that serialises
+ * Key order in the input does not change the hash, so a client that serializes
  * its JSON differently between attempts is not treated as having asked
  * something new.
  */

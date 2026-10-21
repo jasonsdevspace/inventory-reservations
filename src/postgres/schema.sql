@@ -26,7 +26,7 @@ create table if not exists stock (
 -- The reservation ledger. Append only.
 --
 -- A negative quantity commits stock to an order. A positive quantity releases
--- that commitment, because the order shipped or was cancelled. Rows are never
+-- that commitment, because the order shipped or was canceled. Rows are never
 -- updated and never deleted, so the history of a SKU stays readable and a
 -- disagreement with an external system can be explained rather than guessed
 -- at.

@@ -44,7 +44,7 @@ Worked through, starting with ten units on hand:
 The shipment moved goods without changing what can be sold. That is the property the whole design
 turns on, and it falls out of the model rather than needing to be maintained.
 
-Had the order been cancelled instead, the ledger would read `-3, +3`, physical stock would still
+Had the order been canceled instead, the ledger would read `-3, +3`, physical stock would still
 be 10, and salable would return to 10. The released units become available on the next read, with
 no separate restocking step to forget.
 
@@ -57,7 +57,9 @@ one, both be told yes, and both append. The ledger will record the oversell fait
 recording is all it was ever able to do.
 
 That is not an argument in this repository, it is a test. Twelve simultaneous orders are fired at
-one unit of stock with the concurrency control removed, and **eleven or twelve of them succeed**.
+one unit of stock with the concurrency control removed, and **nearly all of them succeed**, typically
+eleven. The test asserts only that more than one does, because one extra acceptance is already an
+oversell and pinning an exact count would make a race test flaky.
 
 The ledger's job is to make damage visible and reversible. Preventing it belongs at the order
 boundary, and conflating the two is how systems end up with neither.
@@ -68,7 +70,7 @@ Three strategies, one of which is wrong on purpose.
 
 | Strategy       | What it does                                        | Result against one unit           |
 | -------------- | --------------------------------------------------- | --------------------------------- |
-| `none`         | Nothing. Read committed, no lock                    | Oversells, 11 or 12 of 12 succeed |
+| `none`         | Nothing. Read committed, no lock                    | Oversells, 10 to 12 of 12 succeed |
 | `row_lock`     | `select ... for update` on the stock row            | Exactly one succeeds              |
 | `serializable` | Isolation level detects the conflict, loser retries | Exactly one succeeds              |
 
@@ -77,13 +79,19 @@ demonstrate the bug cannot prove the fix.
 
 The two correct strategies differ in how they pay for correctness. `row_lock` makes conflicting
 placements for a SKU queue. `serializable` lets them all proceed and makes the losers retry.
-Which is preferable depends on contention, and that is measured rather than asserted.
+Which is preferable depends on how contended a SKU is, since a queue costs waiting and a conflict
+costs a retry.
 
-Retries are bounded and spaced. Repeating a serialisation conflict immediately tends to collide
+The strategy is read strictly. An unknown name used to fall through to a plain transaction with no
+lock, so a one character typo such as `rowlock` quietly switched the protection off, and accepted
+ten to twelve of twelve orders against one unit. It now stops the service at startup.
+
+Retries are bounded and spaced. Repeating a serialization conflict immediately tends to collide
 with the same transactions that caused it, and without jitter contending clients retry in lockstep
 and conflict again together. Past the budget the caller gets a **503** with `Retry-After` rather
 than a driver error, because contention this heavy is a capacity condition and not a client
-mistake.
+mistake. A placement queued behind a row lock for longer than `lock_timeout` gets the same 503, since
+a queue that long is the same condition under the other strategy.
 
 That path exists because CI found it. Five concurrent cancellations under `serializable` exhausted
 a five attempt budget with no backoff, and the raw Postgres error escaped to the caller. It would
@@ -96,7 +104,7 @@ were worthless.
 
 Establishing a connection costs more than the whole transaction, so twelve attempts fired at once
 arrived staggered by setup latency, and each committed before the next one read. Nothing ever
-contended. Warming the pool first removes that serialisation, and the same twelve attempts then
+contended. Warming the pool first removes that serialization, and the same twelve attempts then
 overlap properly.
 
 A test now guards against the suite quietly reverting to that state. It asserts that `none`
@@ -158,19 +166,19 @@ $ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-globex'
 ```
 
 An order placed by one is invisible to the other, and a SKU one merchant has never heard of is a
-404 rather than a glimpse of somebody else's catalogue.
+404 rather than a glimpse of somebody else's catalog.
 
-A missing key and an unrecognised key get the same answer, deliberately. Distinguishing them tells
-an attacker which of their guesses was a real key.
+A missing key and an unrecognized key get the same answer, deliberately, so the response says
+nothing about which keys exist.
 
-Scoping is enforced three times over. The application scopes every query, the ledger carries a
-composite foreign key so a reservation cannot reference another merchant's stock even if a query
-forgets, and idempotency keys are scoped per merchant so two merchants choosing the same key
-cannot collide.
+Scoping is enforced in layers. The application scopes every query, the ledger carries a composite
+foreign key so a reservation cannot reference another merchant's stock even if a query forgets,
+idempotency keys are scoped per merchant so two merchants choosing the same key cannot collide, and
+row level security, described below, catches a query that forgets anyway.
 
 ### What did not change
 
-The domain core did not move at all. Not one line.
+Adding tenancy did not move the domain core at all. Not one line.
 
 Tenancy is a question about who may act and which rows they may see. It is not a question about
 what inventory means, and the core only knows the second kind of thing. It still takes a stock
@@ -187,17 +195,19 @@ everything.
 | `POST /orders/:id/shipments`     | Ship, in whole or in part                       |
 | `POST /orders/:id/cancellations` | Release, in whole or in part                    |
 | `GET /health`                    | Liveness                                        |
+| `GET /ready`                     | Readiness, which includes the database          |
 
 ```
-$ curl -s localhost:8080/inventory/DEMO-1
+$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
 {"sku":"DEMO-1","physical":5,"reserved":0,"salable":5}
 
 $ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-    -H 'idempotency-key: abc' -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
+    -H 'x-api-key: demo-key-acme' -H 'idempotency-key: abc' \
+    -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
 {"entries":[{"sku":"DEMO-1","orderId":"o-1","quantity":-2,"reason":"order_placed"}],"physicalDelta":0}
 
 $ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-    -d '{"sku":"DEMO-1","orderId":"o-2","quantity":10}'
+    -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-1","orderId":"o-2","quantity":10}'
 {"error":{"kind":"insufficient_salable","requested":10,"available":3}}
 ```
 
@@ -205,12 +215,14 @@ A rejection is a **409**, not a 400. The request was understood and the world do
 which is the honest answer when stock ran out between loading a page and submitting an order. A
 400 would blame the caller for something it could not have known. A malformed request really is a
 400, including one carrying a field the API does not understand, because silently ignoring a field
-a client thought mattered is worse than refusing it.
+a client thought mattered is worse than refusing it. An unknown SKU is a 404 on a write, as it is on
+a read.
 
 ## Idempotency
 
 A client whose request times out cannot tell whether the order was placed, so it retries. Send an
-`Idempotency-Key` header and the retry returns the first answer instead of placing a second order.
+`Idempotency-Key` header of up to 255 characters and the retry returns the first answer instead of
+placing a second order.
 
 Three decisions, each with a plausible wrong answer:
 
@@ -225,12 +237,15 @@ client bug into a silent data problem when it is not checked.
 second leaves a window where a crash between them strands a key with no result, and every retry is
 then refused forever. Doing both atomically means a key exists only if the work it describes does.
 
-A duplicate arriving while the original is still running gets a **409**, because the honest answer
-is that the outcome is not known yet. A rejection is replayed like any other result, so a retry
+A duplicate arriving while the original is still running waits for it, because the key's row stays
+locked until the original commits. If the original finishes within `lock_timeout`, the duplicate is
+handed its answer. If it does not, the duplicate gets a **409**, because the honest answer is that
+the outcome is not known yet. A rejection is replayed like any other result, so a retry
 does not quietly succeed because stock arrived in the meantime.
 
 Responses carry `Idempotency-Replayed: true` or `false`, so a client can tell a fresh answer from
-a repeated one without inspecting the body.
+a repeated one without inspecting the body. A replay returns the original status along with the
+original body, so a retried placement is a 201 both times.
 
 ## Design
 
@@ -300,7 +315,7 @@ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
 # send it again, and nothing happens twice
 curl -isX POST localhost:8080/orders -H 'content-type: application/json' \
   -H 'x-api-key: demo-key-acme' -H 'idempotency-key: try-1' \
-  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | head -1
+  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | grep -i idempotency-replayed
 
 # ask for more than is there
 curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
@@ -321,8 +336,8 @@ npm test            # watch mode
 npm run build       # compile to dist, which is what the image runs
 ```
 
-The suite has its own database, `reservations_test`, created when the Postgres volume is first
-initialised. It truncates and reseeds between cases, so sharing one with the running service would
+The suite has its own database, `reservations_test`, created whenever Postgres initializes its data
+directory, which, since that directory is held in memory, is every fresh start of the container. It truncates and reseeds between cases, so sharing one with the running service would
 mean running the tests silently rewrites whatever the demo was showing.
 
 To try a different policy, override it and restart:
@@ -338,10 +353,11 @@ goes to minus five. Under the default `strict` it is refused. The policy is serv
 rather than a request parameter, because letting a caller choose would make `backorder` something
 anyone could ask for.
 
-The integration tests talk to a real Postgres rather than a fake, because the behaviour under test
-belongs to the database. Row locking, isolation levels and serialisation failures cannot be
-demonstrated against a stub. `DATABASE_URL` overrides the connection, and defaults to the compose
-service, so a developer who has run compose needs no configuration at all.
+The integration tests talk to a real Postgres rather than a fake, because the behavior under test
+belongs to the database. Row locking, isolation levels and serialization failures cannot be
+demonstrated against a stub. `DATABASE_URL` and `APP_DATABASE_URL` override the owner and service
+connections, and both default to the compose service, so a developer who has run compose needs no
+configuration at all.
 
 `npm run prose` fails on em dashes, semicolons joining clauses in prose, and process artifacts
 such as `TODO` markers or notes about pending decisions. Comments here explain why the code is the
@@ -363,6 +379,11 @@ That turns the append only property from a promise into a privilege. The trigger
 installed by the owner and cannot be dropped by the role whose appends it governs. Retention,
 which deletes expired idempotency keys, runs as the owner on a schedule rather than being
 something a request handler could be talked into triggering.
+
+The service checks this at startup. Row level security does not bind a table's owner or a
+superuser, so connecting the service with the owner's credentials, the usual one user shortcut,
+would switch the backstop below off with no error anywhere. It refuses to start as any role the
+policies do not bind.
 
 Migrations are a deployment step, not something the service does to itself on startup. A service
 that migrates itself is a service whose runtime credentials can drop its tables.
@@ -390,10 +411,10 @@ create policy stock_tenant_isolation on stock
     with check (merchant_id = current_setting('app.merchant_id', true));
 ```
 
-The merchant is read from a setting the application writes with `set_local` inside each
-transaction. `set_local` rather than `set`, because connections are pooled and reused: a session
-level setting outlives the request that made it and hands the next caller the previous caller's
-tenancy.
+The merchant is read from a setting the application writes with `set_config(..., true)`, the form
+of `SET LOCAL` that accepts a parameter, inside each transaction. Transaction local rather than
+session level, because connections are pooled and reused: a session level setting outlives the
+request that made it and hands the next caller the previous caller's tenancy.
 
 A query that forgets its `where` clause returns one merchant's rows rather than everybody's. A
 query issued outside a transaction has no tenancy and returns nothing at all, which is the right
@@ -409,6 +430,18 @@ so under row level security it had no tenancy and found nothing. Every duplicate
 told the original was still in flight, forever, instead of being handed its answer. The tests that
 caught it were passing happily the day before, because without policies an unscoped read quietly
 worked.
+
+### So did a review
+
+A later review found one query the application did not scope. Recording an idempotency result
+matched on key and endpoint but not on merchant. Row level security narrowed it to the current
+tenant, which is why every behavioral test passed, but the policies do not bind the table's owner.
+Run as the owner, the update overwrote every merchant's stored answer for a shared key, so a retry
+could have replayed one merchant's order to another.
+
+The query is scoped now. A test runs it as the owner, so it checks the application's own scoping
+rather than crediting the backstop, and the service refuses to start as a role the policies do not
+bind.
 
 ## Operability
 
@@ -429,7 +462,7 @@ for a moment did not degrade the service, it killed it. Handled at the pool rath
 call site, because the point is to catch the one nobody remembered to handle.
 
 **Logs are structured and redact the credential.** An access log containing the API key that
-authorised the request turns log retention into credential retention, and anybody who can read
+authorized the request turns log retention into credential retention, and anybody who can read
 logs can place orders.
 
 ```json
@@ -448,9 +481,24 @@ to the line explaining it.
 
 The log recorded a failed password for a specific database role. The client was told none of it.
 
-**Limits are chosen rather than inherited.** A ten second request timeout, because a request that
-has not finished by then is not going to and the connection costs more than failing does. A 16KB
-body limit, well above any legitimate order and well below anything worth buffering.
+**Limits are chosen rather than inherited.** A client gets ten seconds to finish sending a request,
+so a slow sender cannot hold a connection open indefinitely. A 16KB body limit, well above any
+legitimate order and well below anything worth buffering. Identifiers are bounded at the edge, SKUs
+and order ids at 100 characters because both travel in paths, and idempotency keys at 255.
+
+**Every wait on the database has a limit on this side too.** The role's timeouts are enforced by the
+server, so they protect nothing when the server stops answering rather than going away, through a
+stall, a failover, or a network path that drops packets. Connections time out after two seconds and
+queries after six, just above `statement_timeout`, so a live server always answers first. Readiness
+answers within one second. With Postgres frozen rather than stopped:
+
+```
+database frozen   /ready 503 in 1s   requests fail in 2s
+database thawed   /ready 200         recovers without a restart
+```
+
+A connection the driver gave up on is destroyed rather than reused, because the query can still be
+running on it.
 
 **Retention runs as maintenance, not as a side effect.**
 
@@ -467,20 +515,25 @@ privilege anywhere and should not acquire one so that a request handler can tidy
 Multi-stage, ending on `gcr.io/distroless/nodejs24-debian12`. The final image has no shell, no
 package manager and no general purpose userland, so there is nothing to pivot to if the process is
 compromised. It runs as the unprivileged `nonroot` user. Dev dependencies are resolved in a
-separate stage and never reach it.
+separate stage and never reach it. The build stages use Debian 12, the release the runtime is based
+on, so a native dependency is compiled against the C library it will run with.
 
 Configuration is environment only, so the same image runs locally and in production with no
 rebuild.
 
-|                        |                                          |                 |
-| ---------------------- | ---------------------------------------- | --------------- |
-| `DATABASE_URL`         | connection string                        | compose service |
-| `PORT`                 | listen port                              | `8080`          |
-| `CONCURRENCY_STRATEGY` | `none`, `row_lock` or `serializable`     | `row_lock`      |
-| `OVERSELL_POLICY`      | `strict`, `threshold:N` or `backorder:N` | `strict`        |
+| Variable                | Read by   | Meaning                                            | Default         |
+| ----------------------- | --------- | -------------------------------------------------- | --------------- |
+| `APP_DATABASE_URL`      | service   | connection as the application role                 | compose service |
+| `PORT`                  | service   | listen port                                        | `8080`          |
+| `CONCURRENCY_STRATEGY`  | service   | `none`, `row_lock` or `serializable`, nothing else | `row_lock`      |
+| `OVERSELL_POLICY`       | service   | `strict`, `threshold:N` or `backorder:N`           | `strict`        |
+| `DATABASE_URL`          | migration | connection as the owner, also used by retention    | compose service |
+| `APP_DB_PASSWORD`       | migration | password set on the application role               | development one |
+| `SEED_DEMO`             | migration | `true` seeds the demo merchants and SKUs           | unset           |
+| `IDEMPOTENCY_RETENTION` | retention | how old a key must be before it is purged          | `24 hours`      |
 
-`OVERSELL_POLICY` is server configuration rather than a request parameter. Letting a caller choose
-would make `backorder` something anyone could ask for.
+The service never sees the owner's connection string, which is what keeps its credentials from
+being able to drop its own tables.
 
 ## License
 

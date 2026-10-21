@@ -25,10 +25,11 @@ export interface ServerOptions {
 /**
  * Limits that should be decided rather than inherited.
  *
- * A request that has not finished in ten seconds is not going to, and holding
- * the connection open costs more than failing does. The body limit is well
- * above any legitimate order and well below anything worth buffering, since
- * every request this API accepts is a handful of fields.
+ * The request timeout bounds how long a client may take to finish sending a
+ * request, so a slow sender cannot hold a connection open. It does not bound
+ * handling, which the database limits in the pool take care of. The body limit
+ * is well above any legitimate order and well below anything worth buffering,
+ * since every request this API accepts is a handful of fields.
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 const BODY_LIMIT_BYTES = 16 * 1024;
@@ -38,7 +39,7 @@ const BODY_LIMIT_BYTES = 16 * 1024;
  *
  * SKUs and order ids appear in paths, and Fastify refuses a path parameter
  * longer than 100 characters, so accepting a longer one in a body would create
- * an order that could be placed and then never shipped or cancelled. The
+ * an order that could be placed and then never shipped or canceled. The
  * idempotency key only travels in a header, and 255 matches common practice.
  * Both sit far below the btree entry limit an unbounded key used to reach,
  * which came back as a 500.
@@ -117,7 +118,6 @@ const idempotencyFrom = (
 ): IdempotencyContext | undefined =>
     key ? { merchantId, key, endpoint, requestHash: hashRequest(payload) } : undefined;
 
-/** Turns a store outcome into a response. */
 /**
  * Maps a store outcome onto a status, a body and any headers it needs.
  *
@@ -132,7 +132,7 @@ export const responseFor = (
     switch (outcome.kind) {
         case 'contention':
             /*
-             * The retry budget ran out under serialisation conflicts.
+             * The retry budget ran out under serialization conflicts.
              *
              * 503 rather than 500, because nothing is broken and the request
              * is worth repeating. 429 would be wrong as well, since the client
@@ -202,7 +202,7 @@ export const createServer = ({
      *
      * Fastify strips unknown properties by default, so a client that sends a
      * field this API does not understand is told everything went fine and
-     * quietly gets different behaviour from the one it asked for. On requests
+     * quietly gets different behavior from the one it asked for. On requests
      * that move stock that is the wrong trade, so an unknown field is a 400
      * and the client finds out immediately.
      */
@@ -214,7 +214,7 @@ export const createServer = ({
          * Structured logs, with the API key kept out of them.
          *
          * Redaction is not a nicety here. An access log containing the
-         * credential that authorised the request turns log retention into
+         * credential that authorized the request turns log retention into
          * credential retention, and anybody who can read logs can place
          * orders.
          */
@@ -290,19 +290,16 @@ export const createServer = ({
     });
 
     /*
-     * Everything else belongs to a merchant.
+     * The probes are public. Everything else belongs to a merchant.
      *
      * The merchant is resolved from the key on the request and never from
      * anything the caller says about itself. An API that takes a merchant
      * identifier as a parameter is an API where every caller can act as every
      * merchant, and no amount of care further down makes up for that.
-     */
-    /*
-     * The probes are public. Anything else needs a key.
      *
-     * Listed rather than checked one at a time, because adding `/ready` and
-     * forgetting the hook is how a readiness probe ends up answering 401 and
-     * an orchestrator decides the instance never became ready.
+     * The public paths are listed rather than checked one at a time, because
+     * adding `/ready` and forgetting the hook is how a readiness probe ends up
+     * answering 401 and an orchestrator decides the instance never became ready.
      */
     const publicPaths = new Set(['/health', '/ready']);
 
@@ -317,8 +314,8 @@ export const createServer = ({
 
         const merchant = await merchantForApiKey(pool, apiKey);
         if (!merchant) {
-            // Deliberately the same answer as a missing key. Distinguishing
-            // them tells an attacker which of their guesses was a real key.
+            // Deliberately the same answer as a missing key, so the response
+            // says nothing about which keys exist.
             return response.status(401).send({ error: { kind: 'missing_api_key' } });
         }
         request.merchant = merchant;

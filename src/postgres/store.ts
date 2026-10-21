@@ -15,7 +15,7 @@ import {
  *
  * The ledger cannot protect itself. Two transactions can read the same salable
  * quantity and both append, and the ledger will record the oversell. Something
- * has to serialise the read and the write, and there is more than one way to
+ * has to serialize the read and the write, and there is more than one way to
  * do it.
  *
  * - `none` does nothing. Present so the failure can be reproduced on demand
@@ -27,8 +27,8 @@ import {
  *   retries the loser. Nothing blocks, and a contended placement pays for it
  *   by being retried instead.
  *
- * Which of the two correct ones is preferable depends on contention, and that
- * is measured rather than asserted.
+ * Which of the two correct ones is preferable depends on how contended a SKU
+ * is, since a queue costs waiting and a conflict costs a retry.
  */
 export const STRATEGIES = ['none', 'row_lock', 'serializable'] as const;
 export type Strategy = (typeof STRATEGIES)[number];
@@ -58,10 +58,10 @@ const SERIALIZATION_FAILURE = '40001';
 const LOCK_NOT_AVAILABLE = '55P03';
 
 /**
- * Retry budget for serialisation conflicts.
+ * Retry budget for serialization conflicts.
  *
  * Eight rather than five, with backoff between attempts. Retrying a
- * serialisation conflict immediately tends to re-collide with the same
+ * serialization conflict immediately tends to re-collide with the same
  * transactions that caused it, so the attempts are spaced out and jittered.
  * Without the jitter, contending clients retry in lockstep and conflict again
  * together.
@@ -113,8 +113,8 @@ export type Outcome =
      * The SKU does not exist for this merchant.
      *
      * An outcome rather than an error, because it is an answer about the
-     * catalogue and not a fault. Never stored against an idempotency key,
-     * since it describes the catalogue at one moment rather than anything that
+     * catalog and not a fault. Never stored against an idempotency key,
+     * since it describes the catalog at one moment rather than anything that
      * happened, and replaying it would refuse the order after the SKU exists.
      */
     | { readonly kind: 'unknown_sku'; readonly sku: string }
@@ -229,14 +229,11 @@ const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Pro
 };
 
 /**
- * Runs one decision inside a transaction, under the chosen strategy.
+ * One attempt at a decision, either finished or asking to be repeated.
  *
- * The domain function supplied by the caller does the thinking. This function
- * is only responsible for reading a consistent view, writing the result, and
- * deciding what "consistent" is allowed to mean.
- */
-/**
- * One attempt, either finished or asking to be repeated.
+ * The domain function supplied by the caller does the thinking. An attempt is
+ * only responsible for reading a consistent view, writing the result, and
+ * deciding what consistent is allowed to mean under the chosen strategy.
  *
  * Splitting an attempt from the retry loop keeps connection handling in one
  * place. The connection is released as the attempt unwinds, so the backoff

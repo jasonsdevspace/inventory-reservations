@@ -24,7 +24,7 @@ export type EntryReason = 'order_placed' | 'order_shipped' | 'order_canceled' | 
  *
  * A negative quantity commits stock to an order. A positive quantity releases
  * that commitment, either because the order shipped or because it was
- * cancelled. Entries are never updated or deleted, so the full history of a
+ * canceled. Entries are never updated or deleted, so the full history of a
  * SKU stays readable and a disagreement with an external system can be
  * explained rather than guessed at.
  */

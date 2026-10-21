@@ -61,7 +61,7 @@ describe('row level security', () => {
     it('returns nothing at all when no merchant has been declared', async () => {
         const client = await app.connect();
         try {
-            // No transaction, so no `set_local`, so no tenancy. A read with no
+            // No transaction, so no tenant setting, so no tenancy. A read with no
             // owner should find no rows rather than find everybody's.
             const { rows } = await client.query('select merchant_id from stock');
             expect(rows).toHaveLength(0);
@@ -129,7 +129,7 @@ describe('least privilege', () => {
 
     it('cannot read another merchant by lifting the setting mid transaction', async () => {
         /*
-         * `set_local` is transaction scoped, so a caller can change it. That is
+         * The setting is transaction scoped, so a caller can change it. That is
          * fine: the application sets it from the authenticated key and never
          * from input. What matters is that there is no value which discloses
          * everything, and that an empty setting discloses nothing.
