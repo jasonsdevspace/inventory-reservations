@@ -299,7 +299,8 @@ export const createServer = ({
     const publicPaths = new Set(['/health', '/ready']);
 
     app.addHook('onRequest', async (request, response) => {
-        if (publicPaths.has(request.url)) return;
+        // The route rather than the raw URL, which carries any query string.
+        if (publicPaths.has(request.routeOptions.url ?? '')) return;
 
         const apiKey = request.headers['x-api-key'];
         if (typeof apiKey !== 'string' || apiKey.length === 0) {
