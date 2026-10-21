@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
 import type { CommandResult, LedgerEntry, OversellPolicy } from '../domain/types.js';
+import { createMerchant } from './merchants.js';
 import type { Outcome } from './store.js';
 
 /** Helpers shared by the integration tests. Not part of the shipped surface. */
@@ -22,7 +23,19 @@ export const resultOf = (outcome: Outcome): CommandResult => {
 export const resetDatabase = async (pool: pg.Pool): Promise<void> => {
     // Truncate rather than delete. The append only trigger refuses deletes,
     // which is the point of it, and truncate is not a delete.
-    await pool.query('truncate table reservations, stock restart identity');
+    await pool.query(
+        'truncate table reservations, stock, idempotency_keys, merchants restart identity cascade'
+    );
+};
+
+/** A merchant to own the fixtures. Most tests need one and do not care which. */
+export const seedMerchant = async (
+    pool: pg.Pool,
+    id = 'test-merchant',
+    apiKey = `key-${id}`
+): Promise<string> => {
+    await createMerchant(pool, { id, name: id, apiKey });
+    return id;
 };
 
 /**
@@ -44,8 +57,17 @@ export const prewarmPool = async (pool: pg.Pool, count: number): Promise<void> =
     clients.forEach((client) => client.release());
 };
 
-export const seedStock = async (pool: pg.Pool, sku: string, physical: number): Promise<void> => {
-    await pool.query('insert into stock (sku, physical) values ($1, $2)', [sku, physical]);
+export const seedStock = async (
+    pool: pg.Pool,
+    merchantId: string,
+    sku: string,
+    physical: number
+): Promise<void> => {
+    await pool.query('insert into stock (merchant_id, sku, physical) values ($1, $2, $3)', [
+        merchantId,
+        sku,
+        physical,
+    ]);
 };
 
 export interface LedgerState {
@@ -57,12 +79,13 @@ export interface LedgerState {
 
 export const readState = async (
     pool: pg.Pool,
+    merchantId: string,
     sku: string,
     policy: OversellPolicy = { kind: 'strict' }
 ): Promise<LedgerState> => {
     const stockResult = await pool.query<{ physical: number }>(
-        'select physical from stock where sku = $1',
-        [sku]
+        'select physical from stock where merchant_id = $1 and sku = $2',
+        [merchantId, sku]
     );
     const physical = stockResult.rows[0]?.physical ?? 0;
 
@@ -71,9 +94,11 @@ export const readState = async (
         order_id: string;
         quantity: number;
         reason: LedgerEntry['reason'];
-    }>('select sku, order_id, quantity, reason from reservations where sku = $1 order by id', [
-        sku,
-    ]);
+    }>(
+        `select sku, order_id, quantity, reason from reservations
+         where merchant_id = $1 and sku = $2 order by id`,
+        [merchantId, sku]
+    );
     const entries = entryResult.rows.map((row) => ({
         sku: row.sku,
         orderId: row.order_id,

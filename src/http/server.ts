@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
+import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
 import { createStore, type Outcome, type Strategy } from '../postgres/store.js';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
 import type { LedgerEntry, OversellPolicy, Rejection } from '../domain/types.js';
@@ -52,11 +53,12 @@ const statusForRejection = (rejection: Rejection): number =>
     rejection.kind === 'invalid_quantity' ? 400 : 409;
 
 const idempotencyFrom = (
+    merchantId: string,
     key: string | undefined,
     endpoint: string,
     payload: Record<string, unknown>
 ): IdempotencyContext | undefined =>
-    key ? { key, endpoint, requestHash: hashRequest(payload) } : undefined;
+    key ? { merchantId, key, endpoint, requestHash: hashRequest(payload) } : undefined;
 
 /** Turns a store outcome into a response. */
 const reply = (
@@ -96,6 +98,12 @@ const reply = (
     }
 };
 
+declare module 'fastify' {
+    interface FastifyRequest {
+        merchant: Merchant;
+    }
+}
+
 export const createServer = ({ pool, strategy, policy }: ServerOptions): FastifyInstance => {
     /*
      * `removeAdditional` is off deliberately.
@@ -119,11 +127,37 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
 
     app.get('/health', async () => ({ status: 'ok' }));
 
+    /*
+     * Everything else belongs to a merchant.
+     *
+     * The merchant is resolved from the key on the request and never from
+     * anything the caller says about itself. An API that takes a merchant
+     * identifier as a parameter is an API where every caller can act as every
+     * merchant, and no amount of care further down makes up for that.
+     */
+    app.addHook('onRequest', async (request, response) => {
+        if (request.url === '/health') return;
+
+        const apiKey = request.headers['x-api-key'];
+        if (typeof apiKey !== 'string' || apiKey.length === 0) {
+            return response.status(401).send({ error: { kind: 'missing_api_key' } });
+        }
+
+        const merchant = await merchantForApiKey(pool, apiKey);
+        if (!merchant) {
+            // Deliberately the same answer as a missing key. Distinguishing
+            // them tells an attacker which of their guesses was a real key.
+            return response.status(401).send({ error: { kind: 'missing_api_key' } });
+        }
+        request.merchant = merchant;
+    });
+
     app.get<{ Params: { sku: string } }>('/inventory/:sku', async (request, response) => {
         const { sku } = request.params;
+        const merchantId = request.merchant.id;
         const stock = await pool.query<{ physical: number }>(
-            'select physical from stock where sku = $1',
-            [sku]
+            'select physical from stock where merchant_id = $1 and sku = $2',
+            [merchantId, sku]
         );
         const physical = stock.rows[0]?.physical;
         if (physical === undefined) {
@@ -131,8 +165,8 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
         }
 
         const ledger = await pool.query<{ quantity: number }>(
-            'select quantity from reservations where sku = $1',
-            [sku]
+            'select quantity from reservations where merchant_id = $1 and sku = $2',
+            [merchantId, sku]
         );
         const entries = ledger.rows as Pick<LedgerEntry, 'quantity'>[] as LedgerEntry[];
         return response.send({
@@ -148,12 +182,18 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
         { schema: { body: orderBody } },
         async (request, response) => {
             const { sku, orderId, quantity } = request.body;
+            const merchantId = request.merchant.id;
             const idempotency = idempotencyFrom(
+                merchantId,
                 request.headers['idempotency-key'] as string | undefined,
                 'place',
                 { sku, orderId, quantity }
             );
-            const outcome = await store.placeOrder({ sku, orderId, quantity }, policy, idempotency);
+            const outcome = await store.placeOrder(
+                { merchantId, sku, orderId, quantity },
+                policy,
+                idempotency
+            );
             return send(response, outcome, 201);
         }
     );
@@ -164,12 +204,17 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;
+            const merchantId = request.merchant.id;
             const idempotency = idempotencyFrom(
+                merchantId,
                 request.headers['idempotency-key'] as string | undefined,
                 'ship',
                 { sku, orderId, quantity }
             );
-            const outcome = await store.shipOrder({ sku, orderId, quantity }, idempotency);
+            const outcome = await store.shipOrder(
+                { merchantId, sku, orderId, quantity },
+                idempotency
+            );
             return send(response, outcome, 201);
         }
     );
@@ -180,12 +225,17 @@ export const createServer = ({ pool, strategy, policy }: ServerOptions): Fastify
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;
+            const merchantId = request.merchant.id;
             const idempotency = idempotencyFrom(
+                merchantId,
                 request.headers['idempotency-key'] as string | undefined,
                 'cancel',
                 { sku, orderId, quantity }
             );
-            const outcome = await store.cancelOrder({ sku, orderId, quantity }, idempotency);
+            const outcome = await store.cancelOrder(
+                { merchantId, sku, orderId, quantity },
+                idempotency
+            );
             return send(response, outcome, 201);
         }
     );

@@ -1,9 +1,26 @@
--- Physical stock. One row per SKU, holding only what is in the warehouse.
--- Salable quantity is never stored here, because it is derived from this plus
--- the ledger and would otherwise be able to disagree with it.
+-- Merchants.
+--
+-- Every row of inventory belongs to one. Nothing in this schema is global,
+-- because a stock level that is not anybody's is a stock level nobody is
+-- accountable for.
+--
+-- The API key is stored as a hash. A leaked backup should not hand over the
+-- ability to place orders.
+create table if not exists merchants (
+    id text primary key,
+    name text not null,
+    api_key_hash text not null unique,
+    created_at timestamptz not null default now()
+);
+
+-- Physical stock. One row per SKU per merchant, holding only what is in the
+-- warehouse. Salable quantity is never stored here, because it is derived from
+-- this plus the ledger and would otherwise be able to disagree with it.
 create table if not exists stock (
-    sku text primary key,
-    physical integer not null check (physical >= 0)
+    merchant_id text not null references merchants (id),
+    sku text not null,
+    physical integer not null check (physical >= 0),
+    primary key (merchant_id, sku)
 );
 
 -- The reservation ledger. Append only.
@@ -15,18 +32,22 @@ create table if not exists stock (
 -- at.
 create table if not exists reservations (
     id bigint generated always as identity primary key,
-    sku text not null references stock (sku),
+    merchant_id text not null,
+    sku text not null,
     order_id text not null,
     quantity integer not null check (quantity <> 0),
     reason text not null check (
         reason in ('order_placed', 'order_shipped', 'order_canceled', 'adjustment')
     ),
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    -- Composite, so a reservation cannot reference another merchant's stock
+    -- even if the application forgets to scope a query.
+    foreign key (merchant_id, sku) references stock (merchant_id, sku)
 );
 
--- Reading a SKU's ledger is the hot path, since salable quantity is derived on
--- every placement.
-create index if not exists reservations_sku_idx on reservations (sku);
+-- Reading one merchant's ledger for one SKU is the hot path, since salable
+-- quantity is derived on every placement.
+create index if not exists reservations_tenant_sku_idx on reservations (merchant_id, sku);
 
 -- Append only, enforced here rather than by convention.
 --
@@ -48,8 +69,9 @@ for each row execute function reservations_are_append_only();
 -- Idempotency keys.
 --
 -- A client that retries a request after a timeout must not place a second
--- order. The key is supplied by the caller and scoped per endpoint, so the
--- same key on `place` and on `cancel` are different keys and cannot collide.
+-- order. The key is supplied by the caller and scoped per merchant and per
+-- endpoint, so two merchants choosing the same key cannot collide and the same
+-- key on `place` and on `cancel` are different keys.
 --
 -- `request_hash` is kept so a key reused with different arguments can be
 -- rejected rather than silently replaying an answer to a question nobody
@@ -57,12 +79,13 @@ for each row execute function reservations_are_append_only();
 -- concurrent duplicate is told to try again rather than being handed a
 -- half-finished answer.
 create table if not exists idempotency_keys (
+    merchant_id text not null references merchants (id),
     key text not null,
     endpoint text not null,
     request_hash text not null,
     result jsonb,
     created_at timestamptz not null default now(),
-    primary key (key, endpoint)
+    primary key (merchant_id, key, endpoint)
 );
 
 -- Keys are purged on age, so the index serves the only query that sweeps them.

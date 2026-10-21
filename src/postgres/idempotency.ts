@@ -11,9 +11,10 @@ import type pg from 'pg';
  * Three decisions are worth stating, because each has a wrong answer that
  * looks reasonable.
  *
- * **Keys are scoped per endpoint.** The same key sent to `place` and to
- * `cancel` are different keys. Scoping globally would make an unlucky client
- * collide with itself across unrelated operations.
+ * **Keys are scoped per merchant and per endpoint.** Two merchants choosing
+ * the same key cannot collide, and the same key sent to `place` and to
+ * `cancel` are different keys. Scoping globally would let one merchant's retry
+ * return another merchant's answer, which is the worst available outcome.
  *
  * **The request is fingerprinted.** A key reused with different arguments is
  * rejected rather than replayed, because replaying would answer a question
@@ -30,6 +31,7 @@ import type pg from 'pg';
 export const UNIQUE_VIOLATION = '23505';
 
 export interface IdempotencyContext {
+    readonly merchantId: string;
     readonly key: string;
     readonly endpoint: string;
     readonly requestHash: string;
@@ -55,8 +57,9 @@ export const claimKey = async (
     context: IdempotencyContext
 ): Promise<void> => {
     await client.query(
-        'insert into idempotency_keys (key, endpoint, request_hash) values ($1, $2, $3)',
-        [context.key, context.endpoint, context.requestHash]
+        `insert into idempotency_keys (merchant_id, key, endpoint, request_hash)
+         values ($1, $2, $3, $4)`,
+        [context.merchantId, context.key, context.endpoint, context.requestHash]
     );
 };
 
@@ -82,8 +85,9 @@ export const readKey = async (
     context: IdempotencyContext
 ): Promise<ExistingKey | null> => {
     const { rows } = await pool.query<{ request_hash: string; result: unknown | null }>(
-        'select request_hash, result from idempotency_keys where key = $1 and endpoint = $2',
-        [context.key, context.endpoint]
+        `select request_hash, result from idempotency_keys
+         where merchant_id = $1 and key = $2 and endpoint = $3`,
+        [context.merchantId, context.key, context.endpoint]
     );
     const row = rows[0];
     return row ? { requestHash: row.request_hash, result: row.result } : null;
