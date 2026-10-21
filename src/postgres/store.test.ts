@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAppPool, createOwnerPool } from './pool.js';
-import { createStore, type Strategy } from './store.js';
+import { createStore, parseStrategy, type Strategy } from './store.js';
 import {
     prepareDatabase,
     prewarmPool,
@@ -284,3 +284,36 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
         });
     }
 );
+
+describe('strategy configuration', () => {
+    /*
+     * The store only acts on the exact names. Anything else used to fall
+     * through to a plain transaction with no lock, which is `none` under
+     * another name. A one character typo in deployment configuration switched
+     * off the protection this service exists to provide, measured at ten to
+     * twelve of twelve orders accepted against one unit, and the startup log
+     * printed the typo as though it were fine.
+     */
+    it.each([
+        ['none', 'none'],
+        ['row_lock', 'row_lock'],
+        ['serializable', 'serializable'],
+        [undefined, 'row_lock'],
+        ['', 'row_lock'],
+    ])('parses %j', (raw, expected) => {
+        expect(parseStrategy(raw)).toBe(expected);
+    });
+
+    it.each(['rowlock', 'ROW_LOCK', 'row-lock', 'Serializable', ' row_lock'])(
+        'refuses %j rather than running without a lock',
+        (raw) => {
+            expect(() => parseStrategy(raw)).toThrow(/CONCURRENCY_STRATEGY/);
+        }
+    );
+
+    it('refuses to build a store around a strategy it does not know', () => {
+        expect(() => createStore(pool, 'rowlock' as Strategy)).toThrow(
+            /unknown concurrency strategy/i
+        );
+    });
+});
