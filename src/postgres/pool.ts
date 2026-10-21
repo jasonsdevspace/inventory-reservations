@@ -166,12 +166,13 @@ export const assertBoundByRowLevelSecurity = async (pool: pg.Pool): Promise<void
 export const withTenant = async <T>(
     pool: pg.Pool,
     merchantId: string,
-    work: (client: pg.PoolClient) => Promise<T>
+    work: (client: pg.PoolClient) => Promise<T>,
+    isolation: 'read committed' | 'repeatable read' = 'read committed'
 ): Promise<T> => {
     const client = await pool.connect();
     let failure: unknown;
     try {
-        await client.query('begin');
+        await client.query(`begin isolation level ${isolation}`);
         await client.query('select set_config($1, $2, true)', ['app.merchant_id', merchantId]);
         const result = await work(client);
         await client.query('commit');
