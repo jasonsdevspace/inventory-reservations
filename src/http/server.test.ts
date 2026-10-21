@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -55,7 +56,7 @@ const place = (body: unknown, key?: string, auth = apiKey) =>
         payload: body as object,
         headers: {
             'x-api-key': auth,
-            ...(key ? { 'idempotency-key': key } : {}),
+            ...(key !== undefined ? { 'idempotency-key': key } : {}),
         },
     });
 
@@ -135,6 +136,50 @@ describe('writing against a sku that does not exist', () => {
         const retry = await place(order, 'k-later');
         expect(retry.statusCode).toBe(201);
         expect(retry.headers['idempotency-replayed']).toBe('false');
+    });
+});
+
+describe('limits on identifiers', () => {
+    /*
+     * An idempotency key long enough to exceed the btree entry limit used to
+     * reach Postgres and come back as a 500. Identifiers are bounded at the
+     * edge instead, where the answer can be a 400.
+     */
+    it('refuses an over long idempotency key rather than failing on the index', async () => {
+        // Random rather than repeated, because Postgres compresses index entries
+        // and a repeated character would fit under the limit it is meant to hit.
+        const key = randomBytes(1600).toString('hex');
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, key);
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: { kind: 'bad_request' } });
+    });
+
+    it('accepts a key at the limit', async () => {
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, 'k'.repeat(255));
+        expect(response.statusCode).toBe(201);
+    });
+
+    it('refuses a key that is present but empty', async () => {
+        const response = await place({ sku, orderId: 'o-1', quantity: 1 }, '');
+        expect(response.statusCode).toBe(400);
+    });
+
+    it.each([
+        ['a sku', { sku: 's'.repeat(101), orderId: 'o-1', quantity: 1 }],
+        ['an order id', { sku, orderId: 'o'.repeat(101), quantity: 1 }],
+    ])('refuses %s longer than a path parameter can carry', async (_label, body) => {
+        expect((await place(body)).statusCode).toBe(400);
+    });
+
+    it('can ship an order whose id is at the limit', async () => {
+        // The order id travels in the shipment path, so it is bounded to what
+        // a path parameter accepts. Anything longer could be placed and then
+        // never shipped or cancelled.
+        const orderId = 'o'.repeat(100);
+        expect((await place({ sku, orderId, quantity: 1 })).statusCode).toBe(201);
+        expect((await post(`/orders/${orderId}/shipments`, { sku, quantity: 1 })).statusCode).toBe(
+            201
+        );
     });
 });
 
