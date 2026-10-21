@@ -30,7 +30,26 @@ import {
  * Which of the two correct ones is preferable depends on contention, and that
  * is measured rather than asserted.
  */
-export type Strategy = 'none' | 'row_lock' | 'serializable';
+export const STRATEGIES = ['none', 'row_lock', 'serializable'] as const;
+export type Strategy = (typeof STRATEGIES)[number];
+
+const isStrategy = (value: string): value is Strategy =>
+    (STRATEGIES as readonly string[]).includes(value);
+
+/**
+ * Reads the strategy from configuration, and refuses a name it does not know.
+ *
+ * Strict for the same reason the oversell policy is. Only the exact names take
+ * a lock or raise the isolation level, so anything else would run with no
+ * concurrency control at all while looking configured.
+ */
+export const parseStrategy = (raw: string | undefined): Strategy => {
+    if (!raw) return 'row_lock';
+    if (isStrategy(raw)) return raw;
+    throw new Error(
+        `unknown CONCURRENCY_STRATEGY: ${JSON.stringify(raw)}, expected one of ${STRATEGIES.join(', ')}`
+    );
+};
 
 /** Postgres raises this when a serializable transaction loses a conflict. */
 const SERIALIZATION_FAILURE = '40001';
@@ -306,50 +325,63 @@ const runCommand = async (
     return { kind: 'contention' };
 };
 
-export const createStore = (pool: pg.Pool, strategy: Strategy) => ({
-    strategy,
+export const createStore = (pool: pg.Pool, strategy: Strategy) => {
+    // Checked here as well as at startup, because a cast anywhere else can still
+    // hand the store a name it does not know, and the cost of not noticing is an
+    // oversell rather than an error.
+    if (!isStrategy(strategy)) {
+        throw new Error(`unknown concurrency strategy: ${JSON.stringify(strategy)}`);
+    }
+    return {
+        strategy,
 
-    placeOrder: (
-        command: Command,
-        policy: OversellPolicy,
-        idempotency?: IdempotencyContext
-    ): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                placeOrder(
-                    { stock, entries, orderId: command.orderId, quantity: command.quantity },
-                    policy
-                ),
-            idempotency
-        ),
+        placeOrder: (
+            command: Command,
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    placeOrder(
+                        { stock, entries, orderId: command.orderId, quantity: command.quantity },
+                        policy
+                    ),
+                idempotency
+            ),
 
-    shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                shipOrder({ stock, entries, orderId: command.orderId, quantity: command.quantity }),
-            idempotency
-        ),
+        shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    shipOrder({
+                        stock,
+                        entries,
+                        orderId: command.orderId,
+                        quantity: command.quantity,
+                    }),
+                idempotency
+            ),
 
-    cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                cancelOrder({
-                    stock,
-                    entries,
-                    orderId: command.orderId,
-                    quantity: command.quantity,
-                }),
-            idempotency
-        ),
-});
+        cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    cancelOrder({
+                        stock,
+                        entries,
+                        orderId: command.orderId,
+                        quantity: command.quantity,
+                    }),
+                idempotency
+            ),
+    };
+};
 
 export type Store = ReturnType<typeof createStore>;
