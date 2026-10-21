@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { withTenant } from './pool.js';
+import { releaseAfter, rollBackAfter, withTenant } from './pool.js';
 import { cancelOrder, placeOrder, shipOrder } from '../domain/commands.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../domain/types.js';
 import {
@@ -255,6 +255,7 @@ const runAttempt = async (
     const client = await pool.connect();
     // Whether a lock wait that runs out was a wait on the key or on the work.
     let claiming = idempotency !== undefined;
+    let failure: unknown;
     try {
         await client.query(
             strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
@@ -303,7 +304,7 @@ const runAttempt = async (
         await client.query(shouldCommit ? 'commit' : 'rollback');
         return { done: true, outcome: { kind: 'applied', result } };
     } catch (error) {
-        await client.query('rollback').catch(() => undefined);
+        failure = await rollBackAfter(client, error);
 
         // The key was already claimed, so this request duplicates one that has
         // run or is still running.
@@ -330,7 +331,7 @@ const runAttempt = async (
 
         throw error;
     } finally {
-        client.release();
+        releaseAfter(client, failure);
     }
 };
 

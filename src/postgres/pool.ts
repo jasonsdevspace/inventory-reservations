@@ -21,11 +21,6 @@ export const appConnectionString = (): string =>
     'postgres://reservations_app:reservations_app@localhost:5432/reservations';
 
 /**
- * `max` is worth setting explicitly. The racing tests open more simultaneous
- * transactions than the driver's default pool allows, and a pool that runs out
- * of clients looks exactly like a deadlock from the outside.
- */
-/**
  * A pool that survives the database going away.
  *
  * An idle client that loses its connection emits an error on the pool, and an
@@ -53,14 +48,78 @@ const withErrorHandling = (pool: pg.Pool, label: string): pg.Pool => {
     return pool;
 };
 
+/**
+ * Every wait on the database has a limit on this side as well.
+ *
+ * The role's timeouts are enforced by the server, so they protect nothing when
+ * the server itself stops answering, through a stall, a failover, or a network
+ * path that drops packets instead of refusing them. Without a limit here a
+ * request in that state waits forever, and so does the readiness probe meant
+ * to report it.
+ *
+ * Two seconds to obtain a connection. The service's queries get six, just
+ * above the role's statement_timeout, so a server that is alive always answers
+ * first with a proper error and this limit only fires when it is not. The
+ * owner gets no query limit, because a migration or a retention run is allowed
+ * to take as long as it takes.
+ */
+const CONNECT_TIMEOUT_MS = 2_000;
+const QUERY_TIMEOUT_MS = 6_000;
+
 export const createOwnerPool = (overrides: pg.PoolConfig = {}): pg.Pool =>
     withErrorHandling(
-        new Pool({ connectionString: ownerConnectionString(), ...overrides }),
+        new Pool({
+            connectionString: ownerConnectionString(),
+            connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+            ...overrides,
+        }),
         'owner'
     );
 
 export const createAppPool = (overrides: pg.PoolConfig = {}): pg.Pool =>
-    withErrorHandling(new Pool({ connectionString: appConnectionString(), ...overrides }), 'app');
+    withErrorHandling(
+        new Pool({
+            connectionString: appConnectionString(),
+            connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+            query_timeout: QUERY_TIMEOUT_MS,
+            ...overrides,
+        }),
+        'app'
+    );
+
+/**
+ * Whether a connection can be handed to the next request after this error.
+ *
+ * An error Postgres reported means the session is intact, and rolling back
+ * returns it to a known state. An error the driver raised itself, a read
+ * timeout or a dropped socket, can leave a query still running on the
+ * connection with a reply on its way that nobody will read. That connection is
+ * destroyed rather than reused, and closing it is what makes the server
+ * abandon the transaction.
+ */
+export const reusableAfter = (error: unknown): boolean => error instanceof pg.DatabaseError;
+
+/**
+ * Rolls back after a failure, and reports the connection's fate.
+ *
+ * Returns the failure that decides whether the connection survives, which is
+ * the rollback's own failure when there was one, since a rollback that timed
+ * out leaves the connection exactly as unusable as the query that preceded it.
+ */
+export const rollBackAfter = async (client: pg.PoolClient, failure: unknown): Promise<unknown> => {
+    if (!reusableAfter(failure)) return failure;
+    try {
+        await client.query('rollback');
+        return failure;
+    } catch (rollbackFailure) {
+        return rollbackFailure;
+    }
+};
+
+/** Returns a connection to the pool, or destroys it if it cannot be trusted. */
+export const releaseAfter = (client: pg.PoolClient, failure: unknown): void => {
+    client.release(failure !== undefined && !reusableAfter(failure));
+};
 
 /**
  * Refuses to continue as a role that row level security does not bind.
@@ -110,6 +169,7 @@ export const withTenant = async <T>(
     work: (client: pg.PoolClient) => Promise<T>
 ): Promise<T> => {
     const client = await pool.connect();
+    let failure: unknown;
     try {
         await client.query('begin');
         await client.query('select set_config($1, $2, true)', ['app.merchant_id', merchantId]);
@@ -117,9 +177,9 @@ export const withTenant = async <T>(
         await client.query('commit');
         return result;
     } catch (error) {
-        await client.query('rollback').catch(() => undefined);
+        failure = await rollBackAfter(client, error);
         throw error;
     } finally {
-        client.release();
+        releaseAfter(client, failure);
     }
 };
