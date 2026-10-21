@@ -107,6 +107,12 @@ export const responseFor = (
                 body: { error: { kind: 'key_reused' } },
                 replayed: false,
             };
+        case 'unknown_sku':
+            return {
+                status: 404,
+                body: { error: { kind: 'unknown_sku', sku: outcome.sku } },
+                replayed: false,
+            };
         case 'in_flight':
             return {
                 status: 409,

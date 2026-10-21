@@ -107,6 +107,15 @@ export type Outcome =
     | { readonly kind: 'in_flight' }
     | { readonly kind: 'key_reused' }
     /**
+     * The SKU does not exist for this merchant.
+     *
+     * An outcome rather than an error, because it is an answer about the
+     * catalogue and not a fault. Never stored against an idempotency key,
+     * since it describes the catalogue at one moment rather than anything that
+     * happened, and replaying it would refuse the order after the SKU exists.
+     */
+    | { readonly kind: 'unknown_sku'; readonly sku: string }
+    /**
      * The retry budget ran out.
      *
      * Contention this heavy is a capacity problem rather than a client
@@ -122,7 +131,7 @@ const readStock = async (
     merchantId: string,
     sku: string,
     lock: boolean
-): Promise<Stock> => {
+): Promise<Stock | undefined> => {
     const { rows } = await client.query<{ sku: string; physical: number }>(
         `select sku, physical from stock where merchant_id = $1 and sku = $2${
             lock ? ' for update' : ''
@@ -130,8 +139,7 @@ const readStock = async (
         [merchantId, sku]
     );
     const row = rows[0];
-    if (!row) throw new Error(`unknown sku: ${sku}`);
-    return { sku: row.sku, physical: row.physical };
+    return row ? { sku: row.sku, physical: row.physical } : undefined;
 };
 
 const readEntries = async (
@@ -266,6 +274,12 @@ const runAttempt = async (
             command.sku,
             strategy === 'row_lock'
         );
+        if (!stock) {
+            // Rolled back rather than committed, so a key claimed above is
+            // released and a retry once the SKU exists is evaluated afresh.
+            await client.query('rollback');
+            return { done: true, outcome: { kind: 'unknown_sku', sku: command.sku } };
+        }
         const entries = await readEntries(client, command.merchantId, command.sku);
         const result = decide(stock, entries);
 
