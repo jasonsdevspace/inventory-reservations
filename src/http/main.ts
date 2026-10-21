@@ -1,4 +1,5 @@
 import { applySchema, createPool } from '../postgres/pool.js';
+import { seedDemoStock } from '../postgres/seed.js';
 import type { Strategy } from '../postgres/store.js';
 import { parsePolicy } from './policy.js';
 import { createServer } from './server.js';
@@ -14,6 +15,10 @@ const port = Number(process.env.PORT ?? 8080);
 
 const pool = createPool();
 await applySchema(pool);
+
+// Compose sets this so a reader has something to query the moment the service
+// is up. Production leaves it unset.
+if (process.env.SEED_DEMO === 'true') await seedDemoStock(pool);
 
 const app = createServer({ pool, strategy, policy: parsePolicy(process.env.OVERSELL_POLICY) });
 

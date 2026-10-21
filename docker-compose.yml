@@ -20,6 +20,10 @@ services:
             PORT: 8080
             CONCURRENCY_STRATEGY: row_lock
             OVERSELL_POLICY: strict
+            # So `docker compose up` leaves something to query. A clean
+            # database has no SKUs, and a service with nothing in it cannot be
+            # seen working.
+            SEED_DEMO: 'true'
         ports:
             - '8080:8080'
         depends_on:
