@@ -225,9 +225,19 @@ curl localhost:8080/inventory/DEMO-1
 
 That is the whole setup. No local Node, no local Postgres.
 
-Compose seeds three SKUs so there is something to try immediately: `DEMO-1` with five units,
-`DEMO-SCARCE` with one, and `DEMO-PLENTIFUL` with five hundred. `DEMO-SCARCE` is the interesting
-one, because it is the last unit two people are about to want.
+Compose seeds four SKUs so there is something to try immediately.
+
+| SKU              | Physical | Reserved | Salable |                                            |
+| ---------------- | -------- | -------- | ------- | ------------------------------------------ |
+| `DEMO-1`         | 5        | 0        | 5       | ordinary                                   |
+| `DEMO-SCARCE`    | 1        | 0        | 1       | the last unit two people are about to want |
+| `DEMO-PLENTIFUL` | 500      | 0        | 500     | room to apply load                         |
+| `DEMO-COMMITTED` | 10       | -3       | **7**   | arrives mid-story                          |
+
+`DEMO-COMMITTED` is the one to look at first. Ten units on hand, three committed to an order that
+has not shipped, seven available to sell. It is the worked example above, true before anybody has
+done anything, so the difference between physical and salable quantity is visible on the first
+request rather than only after you make one.
 
 ```bash
 # commit two of the five
@@ -253,6 +263,23 @@ npm run verify      # type-check, lint, format, prose, tests
 npm test            # watch mode
 npm run build       # compile to dist, which is what the image runs
 ```
+
+The suite has its own database, `reservations_test`, created when the Postgres volume is first
+initialised. It truncates and reseeds between cases, so sharing one with the running service would
+mean running the tests silently rewrites whatever the demo was showing.
+
+To try a different policy, override it and restart:
+
+```bash
+OVERSELL_POLICY=backorder:10 docker compose up -d --force-recreate api
+curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
+  -d '{"sku":"DEMO-SCARCE","orderId":"o-9","quantity":6}'
+```
+
+With one unit on hand and a backorder limit of ten, that order is accepted and salable quantity
+goes to minus five. Under the default `strict` it is refused. The policy is server configuration
+rather than a request parameter, because letting a caller choose would make `backorder` something
+anyone could ask for.
 
 The integration tests talk to a real Postgres rather than a fake, because the behaviour under test
 belongs to the database. Row locking, isolation levels and serialisation failures cannot be
