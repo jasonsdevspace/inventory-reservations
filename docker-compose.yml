@@ -14,7 +14,7 @@ services:
     # of those privileges.
     migrate:
         build: .
-        command: ['dist/postgres/migrate-cli.js']
+        command: ['dist/postgres/migrate/migrate-cli.js']
         environment:
             DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
             APP_DB_PASSWORD: reservations_app

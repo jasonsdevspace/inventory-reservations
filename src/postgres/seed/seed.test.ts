@@ -1,8 +1,8 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool } from './pool.js';
+import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { DEMO_STOCK, seedDemoStock } from './seed.js';
-import { prepareDatabase, readState, resetDatabase } from './testkit.js';
+import { prepareDatabase, readState, resetDatabase } from '../testkit/testkit.js';
 
 let owner: pg.Pool;
 let pool: pg.Pool;

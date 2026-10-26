@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { cancelOrder, placeOrder, shipOrder } from './commands.js';
-import { netReservations, salableQuantity } from './ledger.js';
-import type { LedgerEntry, OversellPolicy, Stock } from './types.js';
+import { netReservations, salableQuantity } from '../ledger/ledger.js';
+import type { LedgerEntry, OversellPolicy, Stock } from '../types.js';
 
 const sku = 'WIDGET-1';
 const stock = (physical: number): Stock => ({ sku, physical });

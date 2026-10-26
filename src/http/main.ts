@@ -1,7 +1,7 @@
-import { assertBoundByRowLevelSecurity, createAppPool } from '../postgres/pool.js';
-import { parseStrategy } from '../postgres/store.js';
-import { parsePolicy } from './policy.js';
-import { createServer } from './server.js';
+import { assertBoundByRowLevelSecurity, createAppPool } from '../postgres/pool/pool.js';
+import { parseStrategy } from '../postgres/store/store.js';
+import { parsePolicy } from './policy/policy.js';
+import { createServer } from './server/server.js';
 
 /**
  * Entry point for the container.

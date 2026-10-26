@@ -1,10 +1,10 @@
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
-import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
-import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
-import { createStore, type Outcome, type Strategy } from '../postgres/store.js';
-import { netReservations, salableQuantity } from '../domain/ledger.js';
-import type { OversellPolicy, Rejection } from '../domain/types.js';
+import { hashRequest, type IdempotencyContext } from '../../postgres/idempotency/idempotency.js';
+import { merchantForApiKey, type Merchant } from '../../postgres/merchants/merchants.js';
+import { createStore, type Outcome, type Strategy } from '../../postgres/store/store.js';
+import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js';
+import type { OversellPolicy, Rejection } from '../../domain/types.js';
 
 /**
  * HTTP in front of the store.

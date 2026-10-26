@@ -36,7 +36,7 @@ COPY package.json ./
 # SQL is read at runtime by the migration step, so it has to sit beside the
 # compiled module that reads it rather than only in the source tree. Copied as
 # a group, because naming files individually means the next one gets forgotten.
-COPY src/postgres/*.sql ./dist/postgres/
+COPY src/postgres/migrate/*.sql ./dist/postgres/migrate/
 
 # Distroless provides this unprivileged user. Running as root in a container
 # that needs no privileges is a habit worth not having.

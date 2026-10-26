@@ -1,5 +1,5 @@
-import { commitLimit, outstandingForOrder } from './ledger.js';
-import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from './types.js';
+import { commitLimit, outstandingForOrder } from '../ledger/ledger.js';
+import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../types.js';
 
 /**
  * The three things that can happen to a reservation.

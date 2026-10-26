@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool } from './pool.js';
-import { hashRequest } from './idempotency.js';
+import { createAppPool, createOwnerPool } from '../pool/pool.js';
+import { hashRequest } from '../idempotency/idempotency.js';
 import { createStore, parseStrategy, type Strategy } from './store.js';
 import {
     prepareDatabase,
@@ -11,8 +11,8 @@ import {
     resultOf,
     seedMerchant,
     seedStock,
-} from './testkit.js';
-import type { OversellPolicy } from '../domain/types.js';
+} from '../testkit/testkit.js';
+import type { OversellPolicy } from '../../domain/types.js';
 
 /*
  * These talk to a real Postgres, started by `docker compose up -d`.

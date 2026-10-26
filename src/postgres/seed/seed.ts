@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { createMerchant } from './merchants.js';
+import { createMerchant } from '../merchants/merchants.js';
 
 /**
  * Two merchants and some stock, so the service can be seen working.

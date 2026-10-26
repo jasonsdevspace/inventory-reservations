@@ -1,9 +1,9 @@
 import type pg from 'pg';
-import { netReservations, salableQuantity } from '../domain/ledger.js';
-import type { CommandResult, LedgerEntry, OversellPolicy } from '../domain/types.js';
-import { createMerchant } from './merchants.js';
-import { migrate } from './migrate.js';
-import type { Outcome } from './store.js';
+import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js';
+import type { CommandResult, LedgerEntry, OversellPolicy } from '../../domain/types.js';
+import { createMerchant } from '../merchants/merchants.js';
+import { migrate } from '../migrate/migrate.js';
+import type { Outcome } from '../store/store.js';
 
 /**
  * Helpers shared by the integration tests. Not part of the shipped surface.

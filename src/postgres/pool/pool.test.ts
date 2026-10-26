@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createAppPool, createOwnerPool, withTenant } from './pool.js';
-import { prepareDatabase } from './testkit.js';
+import { prepareDatabase } from '../testkit/testkit.js';
 
 /*
  * A database that stops answering, as opposed to one that has gone away.

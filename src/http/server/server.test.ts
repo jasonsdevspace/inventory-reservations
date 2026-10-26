@@ -2,15 +2,15 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool } from '../postgres/pool.js';
+import { createAppPool, createOwnerPool } from '../../postgres/pool/pool.js';
 import {
     prepareDatabase,
     prewarmPool,
     resetDatabase,
     seedMerchant,
     seedStock,
-} from '../postgres/testkit.js';
-import { parsePolicy } from './policy.js';
+} from '../../postgres/testkit/testkit.js';
+import { parsePolicy } from '../policy/policy.js';
 import { createServer, responseFor } from './server.js';
 
 const sku = 'WIDGET-1';
