@@ -75,3 +75,11 @@ jobs:
 
             - name: Test
               run: npm run test:run
+
+            # The image runs the compiled output, which reads its SQL from
+            # beside it. Migrating from dist catches a build that compiles but
+            # leaves the schema behind.
+            - name: Build and migrate from the compiled output
+              run: npm run build && node dist/postgres/migrate/migrate-cli.js
+              env:
+                  APP_DB_PASSWORD: reservations_app
