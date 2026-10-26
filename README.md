@@ -37,42 +37,54 @@ Docker Desktop includes Compose. On Linux, Docker Engine with the Compose plugin
 
 ### Run the service
 
-```bash
-git clone https://github.com/jasonsdevspace/inventory-reservations.git
-cd inventory-reservations
-docker compose up -d --build
-```
+1. Download the code and move into the project folder.
 
-This starts Postgres, applies the schema, loads demo data and serves the API on port 8080. When it
-finishes, check that it is up:
+    ```bash
+    git clone https://github.com/jasonsdevspace/inventory-reservations.git
+    cd inventory-reservations
+    ```
 
-```bash
-curl localhost:8080/ready
-```
+2. Build and start Postgres and the API in the background. This also applies the schema and loads
+   the demo data.
 
-```json
-{ "status": "ready" }
-```
+    ```bash
+    docker compose up -d --build
+    ```
+
+3. Check that the API is up and can reach its database.
+
+    ```bash
+    curl localhost:8080/ready
+    ```
+
+    It answers `{ "status": "ready" }`. The API is now on port 8080.
 
 ### Run the tests
 
 The tests use the Postgres container started above, so leave it running.
 
-```bash
-npm ci
-npm run verify
-```
+1. Install the exact dependency versions recorded in `package-lock.json`.
 
-`verify` runs type checking, linting, formatting, a prose check and the full test suite. Use
-`npm test` for watch mode while you work.
+    ```bash
+    npm ci
+    ```
+
+2. Run every check CI runs: type checking, linting, formatting, a prose check and the tests.
+
+    ```bash
+    npm run verify
+    ```
+
+Use `npm test` instead for watch mode while you work.
 
 ### Stop it
+
+Stop and remove the containers. The database lives in memory, so this also clears it, and the next
+`up` starts fresh.
 
 ```bash
 docker compose down
 ```
-
-The database lives in memory, so this also clears it. The next `up` starts fresh.
 
 ## Try it
 
@@ -88,7 +100,10 @@ Every request needs an API key. The demo data includes two merchants, **Acme**
 
 Responses are shown formatted below. Add `| jq` to a command if you have it installed.
 
-**1. Check stock.** `DEMO-COMMITTED` has ten on hand, but three are reserved for an order that has
+<details>
+<summary><b>1. Check stock</b>: reserved units are not for sale</summary>
+
+`DEMO-COMMITTED` has ten on hand, but three are reserved for an order that has
 not shipped, so seven can be sold. Reservations are stored as negative entries, which is why
 `reserved` reads -3.
 
@@ -101,7 +116,12 @@ curl localhost:8080/inventory/DEMO-COMMITTED \
 { "sku": "DEMO-COMMITTED", "physical": 10, "reserved": -3, "salable": 7 }
 ```
 
-**2. Place an order.** The idempotency key makes the request safe to retry.
+</details>
+
+<details>
+<summary><b>2. Place an order</b>: a retry never orders twice</summary>
+
+The idempotency key makes the request safe to retry.
 
 ```bash
 curl localhost:8080/orders \
@@ -123,7 +143,12 @@ curl localhost:8080/orders \
 Run the same command again. You get the same answer and no second order is placed. Add `--include`
 to see the `idempotency-replayed: true` header that marks it as a repeat.
 
-**3. Ship it.** The goods leave the warehouse, so stock on hand drops from 5 to 3. Available stock
+</details>
+
+<details>
+<summary><b>3. Ship it</b>: stock on hand drops, available stock does not</summary>
+
+The goods leave the warehouse, so stock on hand drops from 5 to 3. Available stock
 stays at 3, because those two units were already spoken for.
 
 ```bash
@@ -140,7 +165,12 @@ curl localhost:8080/inventory/DEMO-1 \
 { "sku": "DEMO-1", "physical": 3, "reserved": 0, "salable": 3 }
 ```
 
-**4. Ask for more than exists.** The order is refused with a 409 that says what was available.
+</details>
+
+<details>
+<summary><b>4. Ask for more than exists</b>: the order is refused with a 409</summary>
+
+The order is refused with a 409 that says what was available.
 
 ```bash
 curl localhost:8080/orders \
@@ -153,7 +183,12 @@ curl localhost:8080/orders \
 { "error": { "kind": "insufficient_salable", "requested": 4, "available": 1 } }
 ```
 
-**5. Switch merchants.** Globex has its own `DEMO-1`, untouched by anything Acme did.
+</details>
+
+<details>
+<summary><b>5. Switch merchants</b>: each merchant sees only its own stock</summary>
+
+Globex has its own `DEMO-1`, untouched by anything Acme did.
 
 ```bash
 curl localhost:8080/inventory/DEMO-1 \
@@ -163,6 +198,8 @@ curl localhost:8080/inventory/DEMO-1 \
 ```json
 { "sku": "DEMO-1", "physical": 11, "reserved": 0, "salable": 11 }
 ```
+
+</details>
 
 ### All endpoints
 
@@ -177,7 +214,8 @@ curl localhost:8080/inventory/DEMO-1 \
 
 ## How it works
 
-### The ledger
+<details>
+<summary><b>The ledger</b>: append-only entries, available stock derived on every read</summary>
 
 Each product has a physical quantity and a list of reservation entries. Entries are never updated
 or deleted, and a database trigger enforces that.
@@ -189,7 +227,10 @@ or deleted, and a database trigger enforces that.
 Available stock is physical stock plus the sum of the entries. It is computed on every read and
 never stored, so it cannot drift.
 
-### Preventing oversells
+</details>
+
+<details>
+<summary><b>Preventing oversells</b>: three concurrency strategies, one wrong on purpose</summary>
 
 The ledger records an oversell faithfully but does nothing to stop one. Two checkouts can read the
 same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks the protection.
@@ -203,7 +244,10 @@ same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks
 The test suite asserts that `none` really does oversell. If the race test ever stops producing
 real contention, it fails instead of quietly passing.
 
-### Oversell policy
+</details>
+
+<details>
+<summary><b>Oversell policy</b>: strict, hold some back, or allow backorders</summary>
 
 Not every business wants zero oversell. `OVERSELL_POLICY` sets the rule.
 
@@ -219,14 +263,20 @@ To try one, restart the API with it set:
 OVERSELL_POLICY=backorder:10 docker compose up -d --force-recreate api
 ```
 
-### Idempotency
+</details>
+
+<details>
+<summary><b>Idempotency</b>: a retried request gets the original answer</summary>
 
 Send an `Idempotency-Key` header and a retried request gets the original response instead of
 doing the work twice. Keys are scoped per merchant and per endpoint. Reusing a key with a different
 request body returns a 422. The key is saved in the same transaction as the order, so a crash can
 never leave one without the other.
 
-### Security
+</details>
+
+<details>
+<summary><b>Security</b>: tenant isolation enforced twice, minimal database rights</summary>
 
 - **The API key decides the merchant.** No request can name a different merchant. Keys are stored
   hashed.
@@ -236,7 +286,10 @@ never leave one without the other.
   schema. Migrations and cleanup run separately, as the owner. The service refuses to start with
   credentials that would bypass row level security.
 
-### Reliability
+</details>
+
+<details>
+<summary><b>Reliability</b>: probes, rate limits and timeouts</summary>
 
 - `/health` and `/ready` are separate, so a database outage takes instances out of rotation
   without restarting them. They recover on their own when it returns.
@@ -246,6 +299,8 @@ never leave one without the other.
   rather than hung requests.
 - Errors returned to clients never include internal details. Each response carries an
   `X-Request-Id` that matches the server log.
+
+</details>
 
 ## Project layout
 
@@ -278,6 +333,9 @@ src/
 Everything is set through environment variables. The defaults match the Compose setup, so local
 development needs none of them.
 
+<details>
+<summary><b>All environment variables</b></summary>
+
 | Variable                | Used by   | Meaning                                   | Default         |
 | ----------------------- | --------- | ----------------------------------------- | --------------- |
 | `APP_DATABASE_URL`      | service   | connection as the restricted app role     | Compose service |
@@ -289,6 +347,8 @@ development needs none of them.
 | `APP_DB_PASSWORD`       | migration | password given to the app role            | development one |
 | `SEED_DEMO`             | migration | `true` loads the demo merchants and stock | unset           |
 | `IDEMPOTENCY_RETENTION` | cleanup   | how long to keep idempotency keys         | `24 hours`      |
+
+</details>
 
 Expired idempotency keys are removed by a separate job, meant to run on a schedule:
 
