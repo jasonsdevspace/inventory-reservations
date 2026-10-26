@@ -1,14 +1,14 @@
 import type pg from 'pg';
-import { releaseAfter, rollBackAfter, withTenant } from './pool.js';
-import { cancelOrder, placeOrder, shipOrder } from '../domain/commands.js';
-import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../domain/types.js';
+import { releaseAfter, rollBackAfter, withTenant } from '../pool/pool.js';
+import { cancelOrder, placeOrder, shipOrder } from '../../domain/commands/commands.js';
+import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../../domain/types.js';
 import {
     claimKey,
     readKey,
     recordResult,
     UNIQUE_VIOLATION,
     type IdempotencyContext,
-} from './idempotency.js';
+} from '../idempotency/idempotency.js';
 
 /**
  * How the order boundary is protected.

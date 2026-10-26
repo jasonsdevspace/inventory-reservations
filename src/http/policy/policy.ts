@@ -1,4 +1,4 @@
-import type { OversellPolicy } from '../domain/types.js';
+import type { OversellPolicy } from '../../domain/types.js';
 
 /**
  * The oversell policy the server runs under.

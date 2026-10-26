@@ -1,4 +1,4 @@
-import type { LedgerEntry, OversellPolicy, Stock } from './types.js';
+import type { LedgerEntry, OversellPolicy, Stock } from '../types.js';
 
 /**
  * The sum of every entry for a SKU.

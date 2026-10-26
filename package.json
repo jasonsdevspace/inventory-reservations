@@ -9,9 +9,9 @@
     },
     "scripts": {
         "type-check": "tsc --noEmit",
-        "build": "tsc -p tsconfig.build.json",
-        "migrate": "npm run build && node dist/postgres/migrate-cli.js",
-        "retention": "npm run build && node dist/postgres/retention-cli.js",
+        "build": "tsc -p tsconfig.build.json && cp src/postgres/migrate/*.sql dist/postgres/migrate/",
+        "migrate": "npm run build && node dist/postgres/migrate/migrate-cli.js",
+        "retention": "npm run build && node dist/postgres/idempotency/retention-cli.js",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",

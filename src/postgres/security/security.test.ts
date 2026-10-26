@@ -1,13 +1,13 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { claimKey, readKey, recordResult } from './idempotency.js';
+import { claimKey, readKey, recordResult } from '../idempotency/idempotency.js';
 import {
     assertBoundByRowLevelSecurity,
     createAppPool,
     createOwnerPool,
     withTenant,
-} from './pool.js';
-import { prepareDatabase, resetDatabase, seedMerchant, seedStock } from './testkit.js';
+} from '../pool/pool.js';
+import { prepareDatabase, resetDatabase, seedMerchant, seedStock } from '../testkit/testkit.js';
 
 /*
  * What the database refuses, independently of the application being careful.
