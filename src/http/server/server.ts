@@ -1,7 +1,12 @@
+import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../../postgres/idempotency/idempotency.js';
-import { merchantForApiKey, type Merchant } from '../../postgres/merchants/merchants.js';
+import {
+    hashApiKey,
+    merchantForApiKey,
+    type Merchant,
+} from '../../postgres/merchants/merchants.js';
 import { createStore, type Outcome, type Strategy } from '../../postgres/store/store.js';
 import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js';
 import type { OversellPolicy, Rejection } from '../../domain/types.js';
@@ -20,7 +25,28 @@ export interface ServerOptions {
     readonly policy: OversellPolicy;
     /** Off in tests, where a log line per request is noise rather than signal. */
     readonly logLevel?: string | false;
+    /** Requests each API key may make per minute. */
+    readonly rateLimitPerMinute?: number;
 }
+
+/**
+ * Enough for any legitimate integration to place orders steadily, and few
+ * enough that one misbehaving client cannot monopolize the database.
+ */
+export const DEFAULT_RATE_LIMIT_PER_MINUTE = 600;
+
+/**
+ * Read strictly, like the strategy. A typo that silently fell back to the
+ * default would look like a working limit until it mattered.
+ */
+export const parseRateLimit = (raw: string | undefined): number => {
+    if (raw === undefined || raw === '') return DEFAULT_RATE_LIMIT_PER_MINUTE;
+    const limit = Number(raw);
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw new Error(`RATE_LIMIT_PER_MINUTE must be a positive integer, got "${raw}"`);
+    }
+    return limit;
+};
 
 /**
  * Limits that should be decided rather than inherited.
@@ -191,12 +217,13 @@ declare module 'fastify' {
     }
 }
 
-export const createServer = ({
+export const createServer = async ({
     pool,
     strategy,
     policy,
     logLevel,
-}: ServerOptions): FastifyInstance => {
+    rateLimitPerMinute = DEFAULT_RATE_LIMIT_PER_MINUTE,
+}: ServerOptions): Promise<FastifyInstance> => {
     /*
      * `removeAdditional` is off deliberately.
      *
@@ -270,6 +297,9 @@ export const createServer = ({
      * goes to the log where it belongs.
      */
     app.setErrorHandler((error: FastifyError, request, response) => {
+        if (error.statusCode === 429) {
+            return response.status(429).send({ error: { kind: 'rate_limited' } });
+        }
         if (error.statusCode && error.statusCode < 500) {
             return response.status(error.statusCode).send({ error: { kind: 'bad_request' } });
         }
@@ -302,10 +332,41 @@ export const createServer = ({
      * answering 401 and an orchestrator decides the instance never became ready.
      */
     const publicPaths = new Set(['/health', '/ready']);
+    // The route rather than the raw URL, which carries any query string.
+    const isPublic = (url: string | undefined): boolean => publicPaths.has(url ?? '');
+
+    /*
+     * Requests are limited per API key, before the key is looked up.
+     *
+     * Registered as an application hook rather than per route, because route
+     * hooks run after application hooks, and the point is that a flood never
+     * reaches the database at all, including the query that resolves the key.
+     * Keys are counted by their hash, so the raw credential is not held in
+     * memory any longer than the request. A request with no key is counted by
+     * address. The count lives in this process, so each instance enforces its
+     * own limit, and a client inventing a new key per request is a job for
+     * address based limits at the edge.
+     */
+    await app.register(rateLimit, {
+        global: false,
+        max: rateLimitPerMinute,
+        timeWindow: 60_000,
+        keyGenerator: (request) => {
+            const apiKey = request.headers['x-api-key'];
+            return typeof apiKey === 'string' && apiKey.length > 0
+                ? `key:${hashApiKey(apiKey)}`
+                : `ip:${request.ip}`;
+        },
+    });
+    const limit = app.rateLimit();
 
     app.addHook('onRequest', async (request, response) => {
-        // The route rather than the raw URL, which carries any query string.
-        if (publicPaths.has(request.routeOptions.url ?? '')) return;
+        if (isPublic(request.routeOptions.url)) return;
+        await limit.call(app, request, response);
+    });
+
+    app.addHook('onRequest', async (request, response) => {
+        if (isPublic(request.routeOptions.url)) return;
 
         const apiKey = request.headers['x-api-key'];
         if (typeof apiKey !== 'string' || apiKey.length === 0) {

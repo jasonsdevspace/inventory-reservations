@@ -11,7 +11,12 @@ import {
     seedStock,
 } from '../../postgres/testkit/testkit.js';
 import { parsePolicy } from '../policy/policy.js';
-import { createServer, responseFor } from './server.js';
+import {
+    createServer,
+    DEFAULT_RATE_LIMIT_PER_MINUTE,
+    parseRateLimit,
+    responseFor,
+} from './server.js';
 
 const sku = 'WIDGET-1';
 const merchantId = 'acme-test';
@@ -26,11 +31,15 @@ beforeAll(async () => {
     owner = createOwnerPool({ max: 5 });
     await prepareDatabase(owner);
     pool = createAppPool({ max: 20 });
-    app = createServer({
+    app = await createServer({
         pool,
         strategy: 'row_lock',
         policy: { kind: 'strict' },
         logLevel: false,
+        // Every case in this file shares one key and one server, so the
+        // default limit would eventually refuse the suite itself. The limit
+        // has its own cases below, against servers of their own.
+        rateLimitPerMinute: 100_000,
     });
     await app.ready();
 });
@@ -192,7 +201,7 @@ describe('reading inventory', () => {
     });
 });
 
-describe('shipping and cancelling', () => {
+describe('shipping and canceling', () => {
     it('ships against an order and leaves salable quantity alone', async () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
         const ship = await post('/orders/o-1/shipments', { sku, quantity: 3 });
@@ -311,7 +320,7 @@ describe('probes', () => {
             connectionString: 'postgres://nobody:nobody@127.0.0.1:1/none',
             connectionTimeoutMillis: 500,
         });
-        const unreachable = createServer({
+        const unreachable = await createServer({
             pool: dead,
             strategy: 'row_lock',
             policy: { kind: 'strict' },
@@ -337,7 +346,7 @@ describe('probes', () => {
         const stalled = createAppPool({
             connectionString: 'postgres://nobody:nobody@192.0.2.1:5432/none',
         });
-        const server = createServer({
+        const server = await createServer({
             pool: stalled,
             strategy: 'row_lock',
             policy: { kind: 'strict' },
@@ -473,5 +482,82 @@ describe('contention', () => {
         );
         expect(response.status).toBe(201);
         expect(response.retryAfterSeconds).toBeUndefined();
+    });
+});
+
+describe('rate limiting', () => {
+    const limited = (max: number, target = pool) =>
+        createServer({
+            pool: target,
+            strategy: 'row_lock',
+            policy: { kind: 'strict' },
+            logLevel: false,
+            rateLimitPerMinute: max,
+        });
+    const read = (server: FastifyInstance, auth?: string) =>
+        server.inject({
+            method: 'GET',
+            url: `/inventory/${sku}`,
+            headers: auth === undefined ? {} : { 'x-api-key': auth },
+        });
+
+    it('refuses a key past its limit, in the usual error shape', async () => {
+        const server = await limited(2);
+        expect((await read(server, apiKey)).statusCode).toBe(200);
+        expect((await read(server, apiKey)).statusCode).toBe(200);
+
+        const refused = await read(server, apiKey);
+        expect(refused.statusCode).toBe(429);
+        expect(refused.json()).toEqual({ error: { kind: 'rate_limited' } });
+        expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+        expect(refused.headers['x-request-id']).toBeTruthy();
+        await server.close();
+    });
+
+    it('counts each key separately', async () => {
+        const server = await limited(1);
+        expect((await read(server, apiKey)).statusCode).toBe(200);
+        expect((await read(server, apiKey)).statusCode).toBe(429);
+        expect((await read(server, otherApiKey)).statusCode).not.toBe(429);
+        await server.close();
+    });
+
+    it('limits requests with no key by address', async () => {
+        const server = await limited(1);
+        expect((await read(server)).statusCode).toBe(401);
+        expect((await read(server)).statusCode).toBe(429);
+        await server.close();
+    });
+
+    it('never limits the probes', async () => {
+        const server = await limited(1);
+        for (let i = 0; i < 3; i++) {
+            expect((await server.inject({ method: 'GET', url: '/health' })).statusCode).toBe(200);
+            expect((await server.inject({ method: 'GET', url: '/ready' })).statusCode).toBe(200);
+        }
+        await server.close();
+    });
+
+    it('refuses before the key is looked up, so a flood never reaches the database', async () => {
+        // With the database unreachable, any request that gets as far as
+        // resolving its key fails with a 500. The refused one never gets there.
+        const dead = createAppPool({
+            connectionString: 'postgres://nobody:nobody@127.0.0.1:1/none',
+            connectionTimeoutMillis: 500,
+        });
+        const server = await limited(1, dead);
+        expect((await read(server, 'invented-key')).statusCode).toBe(500);
+        expect((await read(server, 'invented-key')).statusCode).toBe(429);
+        await server.close();
+        await dead.end();
+    });
+
+    it('reads its configuration strictly', () => {
+        expect(parseRateLimit(undefined)).toBe(DEFAULT_RATE_LIMIT_PER_MINUTE);
+        expect(parseRateLimit('')).toBe(DEFAULT_RATE_LIMIT_PER_MINUTE);
+        expect(parseRateLimit('120')).toBe(120);
+        for (const raw of ['0', '-5', '1.5', 'lots', '60/min']) {
+            expect(() => parseRateLimit(raw)).toThrow(/positive integer/);
+        }
     });
 });
