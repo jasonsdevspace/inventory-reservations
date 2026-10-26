@@ -240,6 +240,8 @@ never leave one without the other.
 
 - `/health` and `/ready` are separate, so a database outage takes instances out of rotation
   without restarting them. They recover on their own when it returns.
+- Each API key may make 600 requests a minute. Past that it gets a 429 with `Retry-After`, and
+  the request is refused before it reaches the database.
 - Every database call has a timeout on both sides, so a stalled database produces fast errors
   rather than hung requests.
 - Errors returned to clients never include internal details. Each response carries an
@@ -282,6 +284,7 @@ development needs none of them.
 | `PORT`                  | service   | port to listen on                         | `8080`          |
 | `CONCURRENCY_STRATEGY`  | service   | `none`, `row_lock` or `serializable`      | `row_lock`      |
 | `OVERSELL_POLICY`       | service   | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
+| `RATE_LIMIT_PER_MINUTE` | service   | requests each API key may make per minute | `600`           |
 | `DATABASE_URL`          | migration | connection as the owner                   | Compose service |
 | `APP_DB_PASSWORD`       | migration | password given to the app role            | development one |
 | `SEED_DEMO`             | migration | `true` loads the demo merchants and stock | unset           |

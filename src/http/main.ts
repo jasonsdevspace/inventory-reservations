@@ -1,7 +1,7 @@
 import { assertBoundByRowLevelSecurity, createAppPool } from '../postgres/pool/pool.js';
 import { parseStrategy } from '../postgres/store/store.js';
 import { parsePolicy } from './policy/policy.js';
-import { createServer } from './server/server.js';
+import { createServer, parseRateLimit } from './server/server.js';
 
 /**
  * Entry point for the container.
@@ -22,7 +22,12 @@ const pool = createAppPool();
 // Before listening, so a deployment connected as the owner never takes traffic.
 await assertBoundByRowLevelSecurity(pool);
 
-const app = createServer({ pool, strategy, policy: parsePolicy(process.env.OVERSELL_POLICY) });
+const app = await createServer({
+    pool,
+    strategy,
+    policy: parsePolicy(process.env.OVERSELL_POLICY),
+    rateLimitPerMinute: parseRateLimit(process.env.RATE_LIMIT_PER_MINUTE),
+});
 
 // Containers are stopped with a signal, and a connection pool that is not
 // drained leaves the database holding sessions until they time out.
