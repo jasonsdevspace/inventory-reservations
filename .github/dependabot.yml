@@ -1,0 +1,29 @@
+# Weekly checks for newer versions of everything this repo depends on.
+#
+# The workflow actions are pinned to commit hashes, which never move on their
+# own, so without this they would quietly fall behind. Minor and patch updates
+# are grouped into one pull request per ecosystem to keep the noise down.
+# Security fixes arrive separately, as soon as an advisory is published.
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: weekly
+      groups:
+          npm:
+              update-types: [minor, patch]
+
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: weekly
+      groups:
+          actions:
+              patterns: ['*']
+
+    # The base images in the Dockerfile, including the distroless runtime.
+    - package-ecosystem: docker
+      directory: /
+      schedule:
+          interval: weekly
