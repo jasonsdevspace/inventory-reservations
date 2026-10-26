@@ -1,5 +1,5 @@
-import { createAppPool } from '../postgres/pool.js';
-import type { Strategy } from '../postgres/store.js';
+import { assertBoundByRowLevelSecurity, createAppPool } from '../postgres/pool.js';
+import { parseStrategy } from '../postgres/store.js';
 import { parsePolicy } from './policy.js';
 import { createServer } from './server.js';
 
@@ -14,10 +14,14 @@ import { createServer } from './server.js';
  * Configuration comes from the environment and nowhere else, so the same image
  * runs locally and in production with no rebuild.
  */
-const strategy = (process.env.CONCURRENCY_STRATEGY ?? 'row_lock') as Strategy;
+const strategy = parseStrategy(process.env.CONCURRENCY_STRATEGY);
 const port = Number(process.env.PORT ?? 8080);
 
 const pool = createAppPool();
+
+// Before listening, so a deployment connected as the owner never takes traffic.
+await assertBoundByRowLevelSecurity(pool);
+
 const app = createServer({ pool, strategy, policy: parsePolicy(process.env.OVERSELL_POLICY) });
 
 // Containers are stopped with a signal, and a connection pool that is not

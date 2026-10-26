@@ -4,7 +4,7 @@ import type { LedgerEntry, OversellPolicy, Stock } from './types.js';
  * The sum of every entry for a SKU.
  *
  * Negative while stock is committed to unshipped orders, and back to zero once
- * every order has shipped or been cancelled. A persistently negative net with
+ * every order has shipped or been canceled. A persistently negative net with
  * no open orders behind it is the signature of a missing compensation, which
  * is what reconciliation looks for.
  */
@@ -24,7 +24,7 @@ export const outstandingForOrder = (entries: readonly LedgerEntry[], orderId: st
     // Negating zero in JavaScript produces negative zero, which compares
     // unequal to zero under Object.is and so trips strict assertions and any
     // Map or Set keyed on the result. Nothing downstream should have to know
-    // that, so it is normalised here.
+    // that, so it is normalized here.
     return net === 0 ? 0 : -net;
 };
 

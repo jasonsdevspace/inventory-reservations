@@ -1,6 +1,12 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool, withTenant } from './pool.js';
+import { claimKey, readKey, recordResult } from './idempotency.js';
+import {
+    assertBoundByRowLevelSecurity,
+    createAppPool,
+    createOwnerPool,
+    withTenant,
+} from './pool.js';
 import { prepareDatabase, resetDatabase, seedMerchant, seedStock } from './testkit.js';
 
 /*
@@ -55,7 +61,7 @@ describe('row level security', () => {
     it('returns nothing at all when no merchant has been declared', async () => {
         const client = await app.connect();
         try {
-            // No transaction, so no `set_local`, so no tenancy. A read with no
+            // No transaction, so no tenant setting, so no tenancy. A read with no
             // owner should find no rows rather than find everybody's.
             const { rows } = await client.query('select merchant_id from stock');
             expect(rows).toHaveLength(0);
@@ -123,7 +129,7 @@ describe('least privilege', () => {
 
     it('cannot read another merchant by lifting the setting mid transaction', async () => {
         /*
-         * `set_local` is transaction scoped, so a caller can change it. That is
+         * The setting is transaction scoped, so a caller can change it. That is
          * fine: the application sets it from the authenticated key and never
          * from input. What matters is that there is no value which discloses
          * everything, and that an empty setting discloses nothing.
@@ -135,5 +141,54 @@ describe('least privilege', () => {
         });
 
         expect(rows).toHaveLength(0);
+    });
+});
+
+describe('the application scopes its own queries', () => {
+    /*
+     * These run as the owner, which row level security does not bind, so the
+     * policies are out of the way and only the application's own scoping is
+     * under test. Run as the service role instead, a query that forgot its
+     * merchant would pass anyway, because the policy would quietly narrow it,
+     * and the test would be crediting the application with the backstop's work.
+     *
+     * A review found exactly that. Recording an idempotency result matched on
+     * key and endpoint but not on merchant. As the owner it overwrote every
+     * merchant's stored answer for the same key, so the next retry would have
+     * replayed one merchant's order to another.
+     */
+    it('records an idempotency result against one merchant only', async () => {
+        const shared = { key: 'shared-key', endpoint: 'place', requestHash: 'h' };
+        const client = await owner.connect();
+        try {
+            await claimKey(client, { merchantId: acme, ...shared });
+            await claimKey(client, { merchantId: globex, ...shared });
+            await recordResult(client, { merchantId: globex, ...shared }, { owner: globex });
+            await recordResult(client, { merchantId: acme, ...shared }, { owner: acme });
+
+            const stored = await readKey(client, { merchantId: globex, ...shared });
+            expect(stored?.result).toEqual({ owner: globex });
+        } finally {
+            client.release();
+        }
+    });
+});
+
+describe('the service runs as a role the policies bind', () => {
+    /*
+     * Row level security does not apply to a table's owner or to a superuser.
+     * Deploying the service with the owner's credentials, the usual one user
+     * shortcut, would switch the backstop off with no error anywhere, and every
+     * tenancy test would still pass because the tests use the right role. So the
+     * service checks at startup and refuses to serve without it.
+     */
+    it('accepts the service role', async () => {
+        await expect(assertBoundByRowLevelSecurity(app)).resolves.toBeUndefined();
+    });
+
+    it('refuses the owner, which the policies do not bind', async () => {
+        await expect(assertBoundByRowLevelSecurity(owner)).rejects.toThrow(
+            /row level security does not apply/
+        );
     });
 });

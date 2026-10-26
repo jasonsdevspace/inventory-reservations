@@ -40,7 +40,7 @@ export interface IdempotencyContext {
 /**
  * A stable fingerprint of the request arguments.
  *
- * Key order in the input does not change the hash, so a client that serialises
+ * Key order in the input does not change the hash, so a client that serializes
  * its JSON differently between attempts is not treated as having asked
  * something new.
  */
@@ -63,16 +63,24 @@ export const claimKey = async (
     );
 };
 
+/**
+ * Stores the answer a retry will be given.
+ *
+ * Matched on merchant as well as key and endpoint. Row level security would
+ * narrow an unscoped update to the current merchant, but the policies do not
+ * bind a table's owner, so the application scoping its own query is what keeps
+ * one merchant's answer from overwriting another's when two choose the same key.
+ */
 export const recordResult = async (
     client: pg.PoolClient,
     context: IdempotencyContext,
     result: unknown
 ): Promise<void> => {
-    await client.query('update idempotency_keys set result = $3 where key = $1 and endpoint = $2', [
-        context.key,
-        context.endpoint,
-        JSON.stringify(result),
-    ]);
+    await client.query(
+        `update idempotency_keys set result = $4
+         where merchant_id = $1 and key = $2 and endpoint = $3`,
+        [context.merchantId, context.key, context.endpoint, JSON.stringify(result)]
+    );
 };
 
 export interface ExistingKey {

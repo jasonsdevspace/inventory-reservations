@@ -2,10 +2,9 @@ import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } f
 import type pg from 'pg';
 import { hashRequest, type IdempotencyContext } from '../postgres/idempotency.js';
 import { merchantForApiKey, type Merchant } from '../postgres/merchants.js';
-import { withTenant } from '../postgres/pool.js';
 import { createStore, type Outcome, type Strategy } from '../postgres/store.js';
 import { netReservations, salableQuantity } from '../domain/ledger.js';
-import type { LedgerEntry, OversellPolicy, Rejection } from '../domain/types.js';
+import type { OversellPolicy, Rejection } from '../domain/types.js';
 
 /**
  * HTTP in front of the store.
@@ -26,21 +25,54 @@ export interface ServerOptions {
 /**
  * Limits that should be decided rather than inherited.
  *
- * A request that has not finished in ten seconds is not going to, and holding
- * the connection open costs more than failing does. The body limit is well
- * above any legitimate order and well below anything worth buffering, since
- * every request this API accepts is a handful of fields.
+ * The request timeout bounds how long a client may take to finish sending a
+ * request, so a slow sender cannot hold a connection open. It does not bound
+ * handling, which the database limits in the pool take care of. The body limit
+ * is well above any legitimate order and well below anything worth buffering,
+ * since every request this API accepts is a handful of fields.
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 const BODY_LIMIT_BYTES = 16 * 1024;
+
+/**
+ * Identifiers are bounded at the edge, where an over long one can be a 400.
+ *
+ * SKUs and order ids appear in paths, and Fastify refuses a path parameter
+ * longer than 100 characters, so accepting a longer one in a body would create
+ * an order that could be placed and then never shipped or canceled. The
+ * idempotency key only travels in a header, and 255 matches common practice.
+ * Both sit far below the btree entry limit an unbounded key used to reach,
+ * which came back as a 500.
+ */
+const MAX_PATH_IDENTIFIER = 100;
+
+/**
+ * How long readiness waits before answering no.
+ *
+ * Shorter than the pool's own limits, because an orchestrator probes on a
+ * schedule and a probe that takes longer than its interval is a probe that
+ * reports nothing useful.
+ */
+const READINESS_DEADLINE_MS = 1_000;
+
+const withinDeadline = <T>(work: Promise<T>, ms: number): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    const expiry = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`no answer within ${ms}ms`)), ms);
+    });
+    return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+};
+const MAX_IDEMPOTENCY_KEY = 255;
+
+const identifier = { type: 'string', minLength: 1, maxLength: MAX_PATH_IDENTIFIER } as const;
 
 const orderBody = {
     type: 'object',
     required: ['sku', 'orderId', 'quantity'],
     additionalProperties: false,
     properties: {
-        sku: { type: 'string', minLength: 1 },
-        orderId: { type: 'string', minLength: 1 },
+        sku: identifier,
+        orderId: identifier,
         quantity: { type: 'integer', minimum: 1 },
     },
 } as const;
@@ -50,8 +82,20 @@ const amendmentBody = {
     required: ['sku', 'quantity'],
     additionalProperties: false,
     properties: {
-        sku: { type: 'string', minLength: 1 },
+        sku: identifier,
         quantity: { type: 'integer', minimum: 1 },
+    },
+} as const;
+
+/**
+ * A key that is present but empty is refused rather than ignored, for the same
+ * reason an unknown body field is. The client asked for idempotency, and
+ * quietly not providing it is worse than saying no.
+ */
+const idempotencyHeaders = {
+    type: 'object',
+    properties: {
+        'idempotency-key': { type: 'string', minLength: 1, maxLength: MAX_IDEMPOTENCY_KEY },
     },
 } as const;
 
@@ -74,7 +118,6 @@ const idempotencyFrom = (
 ): IdempotencyContext | undefined =>
     key ? { merchantId, key, endpoint, requestHash: hashRequest(payload) } : undefined;
 
-/** Turns a store outcome into a response. */
 /**
  * Maps a store outcome onto a status, a body and any headers it needs.
  *
@@ -89,7 +132,7 @@ export const responseFor = (
     switch (outcome.kind) {
         case 'contention':
             /*
-             * The retry budget ran out under serialisation conflicts.
+             * The retry budget ran out under serialization conflicts.
              *
              * 503 rather than 500, because nothing is broken and the request
              * is worth repeating. 429 would be wrong as well, since the client
@@ -105,6 +148,12 @@ export const responseFor = (
             return {
                 status: 422,
                 body: { error: { kind: 'key_reused' } },
+                replayed: false,
+            };
+        case 'unknown_sku':
+            return {
+                status: 404,
+                body: { error: { kind: 'unknown_sku', sku: outcome.sku } },
                 replayed: false,
             };
         case 'in_flight':
@@ -124,8 +173,11 @@ export const responseFor = (
                     replayed,
                 };
             }
+            // A replay returns the first answer, status included, as a
+            // replayed rejection already did. Idempotency-Replayed is what says
+            // it is a replay, so the status does not have to say it as well.
             return {
-                status: replayed ? 200 : successStatus,
+                status: successStatus,
                 body: { entries: result.entries, physicalDelta: result.physicalDelta },
                 replayed,
             };
@@ -150,7 +202,7 @@ export const createServer = ({
      *
      * Fastify strips unknown properties by default, so a client that sends a
      * field this API does not understand is told everything went fine and
-     * quietly gets different behaviour from the one it asked for. On requests
+     * quietly gets different behavior from the one it asked for. On requests
      * that move stock that is the wrong trade, so an unknown field is a 400
      * and the client finds out immediately.
      */
@@ -162,7 +214,7 @@ export const createServer = ({
          * Structured logs, with the API key kept out of them.
          *
          * Redaction is not a nicety here. An access log containing the
-         * credential that authorised the request turns log retention into
+         * credential that authorized the request turns log retention into
          * credential retention, and anybody who can read logs can place
          * orders.
          */
@@ -203,7 +255,7 @@ export const createServer = ({
 
     app.get('/ready', async (_request, response) => {
         try {
-            await pool.query('select 1');
+            await withinDeadline(pool.query('select 1'), READINESS_DEADLINE_MS);
             return { status: 'ready' };
         } catch {
             return response.status(503).send({ status: 'not_ready' });
@@ -225,6 +277,12 @@ export const createServer = ({
         return response.status(500).send({ error: { kind: 'internal', requestId: request.id } });
     });
 
+    // The same envelope as every other error. Fastify's default echoes the
+    // method and path back and uses a shape a client parses nowhere else.
+    app.setNotFoundHandler((_request, response) =>
+        response.status(404).send({ error: { kind: 'not_found' } })
+    );
+
     // Lets a caller quote an identifier when reporting a problem, and ties
     // their report to the log line that explains it.
     app.addHook('onSend', async (request, response) => {
@@ -232,24 +290,22 @@ export const createServer = ({
     });
 
     /*
-     * Everything else belongs to a merchant.
+     * The probes are public. Everything else belongs to a merchant.
      *
      * The merchant is resolved from the key on the request and never from
      * anything the caller says about itself. An API that takes a merchant
      * identifier as a parameter is an API where every caller can act as every
      * merchant, and no amount of care further down makes up for that.
-     */
-    /*
-     * The probes are public. Anything else needs a key.
      *
-     * Listed rather than checked one at a time, because adding `/ready` and
-     * forgetting the hook is how a readiness probe ends up answering 401 and
-     * an orchestrator decides the instance never became ready.
+     * The public paths are listed rather than checked one at a time, because
+     * adding `/ready` and forgetting the hook is how a readiness probe ends up
+     * answering 401 and an orchestrator decides the instance never became ready.
      */
     const publicPaths = new Set(['/health', '/ready']);
 
     app.addHook('onRequest', async (request, response) => {
-        if (publicPaths.has(request.url)) return;
+        // The route rather than the raw URL, which carries any query string.
+        if (publicPaths.has(request.routeOptions.url ?? '')) return;
 
         const apiKey = request.headers['x-api-key'];
         if (typeof apiKey !== 'string' || apiKey.length === 0) {
@@ -258,8 +314,8 @@ export const createServer = ({
 
         const merchant = await merchantForApiKey(pool, apiKey);
         if (!merchant) {
-            // Deliberately the same answer as a missing key. Distinguishing
-            // them tells an attacker which of their guesses was a real key.
+            // Deliberately the same answer as a missing key, so the response
+            // says nothing about which keys exist.
             return response.status(401).send({ error: { kind: 'missing_api_key' } });
         }
         request.merchant = merchant;
@@ -267,41 +323,23 @@ export const createServer = ({
 
     app.get<{ Params: { sku: string } }>('/inventory/:sku', async (request, response) => {
         const { sku } = request.params;
-        const merchantId = request.merchant.id;
+        const inventory = await store.readInventory(request.merchant.id, sku);
 
-        // Read inside a transaction that declares its tenant, because row
-        // level security takes the merchant from a transaction local setting.
-        // A query issued outside one has no tenancy and finds nothing, which
-        // is the right way for it to fail.
-        const { physical, entries } = await withTenant(pool, merchantId, async (client) => {
-            const stock = await client.query<{ physical: number }>(
-                'select physical from stock where merchant_id = $1 and sku = $2',
-                [merchantId, sku]
-            );
-            const ledger = await client.query<{ quantity: number }>(
-                'select quantity from reservations where merchant_id = $1 and sku = $2',
-                [merchantId, sku]
-            );
-            return {
-                physical: stock.rows[0]?.physical,
-                entries: ledger.rows as Pick<LedgerEntry, 'quantity'>[] as LedgerEntry[],
-            };
-        });
-
-        if (physical === undefined) {
+        if (!inventory) {
             return response.status(404).send({ error: { kind: 'unknown_sku', sku } });
         }
+        const { stock, entries } = inventory;
         return response.send({
             sku,
-            physical,
+            physical: stock.physical,
             reserved: netReservations(entries),
-            salable: salableQuantity({ sku, physical }, entries, policy),
+            salable: salableQuantity(stock, entries, policy),
         });
     });
 
     app.post<{ Body: { sku: string; orderId: string; quantity: number } }>(
         '/orders',
-        { schema: { body: orderBody } },
+        { schema: { body: orderBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { sku, orderId, quantity } = request.body;
             const merchantId = request.merchant.id;
@@ -322,7 +360,7 @@ export const createServer = ({
 
     app.post<{ Params: { orderId: string }; Body: { sku: string; quantity: number } }>(
         '/orders/:orderId/shipments',
-        { schema: { body: amendmentBody } },
+        { schema: { body: amendmentBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;
@@ -343,7 +381,7 @@ export const createServer = ({
 
     app.post<{ Params: { orderId: string }; Body: { sku: string; quantity: number } }>(
         '/orders/:orderId/cancellations',
-        { schema: { body: amendmentBody } },
+        { schema: { body: amendmentBody, headers: idempotencyHeaders } },
         async (request, response) => {
             const { orderId } = request.params;
             const { sku, quantity } = request.body;

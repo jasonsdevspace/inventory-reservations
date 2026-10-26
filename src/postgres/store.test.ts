@@ -1,7 +1,8 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAppPool, createOwnerPool } from './pool.js';
-import { createStore, type Strategy } from './store.js';
+import { hashRequest } from './idempotency.js';
+import { createStore, parseStrategy, type Strategy } from './store.js';
 import {
     prepareDatabase,
     prewarmPool,
@@ -16,8 +17,8 @@ import type { OversellPolicy } from '../domain/types.js';
 /*
  * These talk to a real Postgres, started by `docker compose up -d`.
  *
- * The behaviour under test belongs to the database: row locking, isolation
- * levels and serialisation failures. A fake would prove nothing about any of
+ * The behavior under test belongs to the database: row locking, isolation
+ * levels and serialization failures. A fake would prove nothing about any of
  * them, so there is not one here.
  */
 
@@ -284,3 +285,108 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
         });
     }
 );
+
+describe('strategy configuration', () => {
+    /*
+     * The store only acts on the exact names. Anything else used to fall
+     * through to a plain transaction with no lock, which is `none` under
+     * another name. A one character typo in deployment configuration switched
+     * off the protection this service exists to provide, measured at ten to
+     * twelve of twelve orders accepted against one unit, and the startup log
+     * printed the typo as though it were fine.
+     */
+    it.each([
+        ['none', 'none'],
+        ['row_lock', 'row_lock'],
+        ['serializable', 'serializable'],
+        [undefined, 'row_lock'],
+        ['', 'row_lock'],
+    ])('parses %j', (raw, expected) => {
+        expect(parseStrategy(raw)).toBe(expected);
+    });
+
+    it.each(['rowlock', 'ROW_LOCK', 'row-lock', 'Serializable', ' row_lock'])(
+        'refuses %j rather than running without a lock',
+        (raw) => {
+            expect(() => parseStrategy(raw)).toThrow(/CONCURRENCY_STRATEGY/);
+        }
+    );
+
+    it('refuses to build a store around a strategy it does not know', () => {
+        expect(() => createStore(pool, 'rowlock' as Strategy)).toThrow(
+            /unknown concurrency strategy/i
+        );
+    });
+});
+
+describe('a wait that runs past lock_timeout', () => {
+    /*
+     * The role's lock_timeout bounds every wait, which is the point of it, but
+     * the bounded wait used to surface as an unhandled 55P03 and reach a client
+     * as a 500. These hold a lock from the owner and let the store's wait run
+     * out against it.
+     *
+     * A short timeout on this pool keeps the suite fast. Set per session, it
+     * overrides the role's default for these connections and nowhere else.
+     */
+    let impatient: pg.Pool;
+
+    beforeAll(() => {
+        impatient = createAppPool({ max: 2, options: '-c lock_timeout=200ms' });
+    });
+
+    afterAll(async () => {
+        await impatient.end();
+    });
+
+    const holding = async <T>(lock: string, values: unknown[], work: () => Promise<T>) => {
+        const holder = await owner.connect();
+        try {
+            await holder.query('begin');
+            await holder.query(lock, values);
+            return await work();
+        } finally {
+            await holder.query('rollback');
+            holder.release();
+        }
+    };
+
+    it('reports a row held too long as contention, the same as a spent retry budget', async () => {
+        const store = createStore(impatient, 'row_lock');
+        const outcome = await holding(
+            'select 1 from stock where merchant_id = $1 and sku = $2 for update',
+            [merchantId, sku],
+            () => store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 1 }, strict)
+        );
+
+        expect(outcome.kind).toBe('contention');
+    });
+
+    it('reports a duplicate blocked behind a running original as in flight', async () => {
+        /*
+         * A key is claimed and its result recorded in one transaction, so a
+         * committed key always has a result. A real duplicate never finds a
+         * half finished row. It waits on the unique index behind the original,
+         * and if the original is still running when the wait runs out, the
+         * honest answer is that the outcome is not known yet.
+         */
+        const store = createStore(impatient, 'row_lock');
+        const context = {
+            merchantId,
+            key: 'k-1',
+            endpoint: 'place',
+            requestHash: hashRequest({ sku, orderId: 'o-1', quantity: 1 }),
+        };
+        const outcome = await holding(
+            `insert into idempotency_keys (merchant_id, key, endpoint, request_hash)
+             values ($1, $2, $3, $4)`,
+            [context.merchantId, context.key, context.endpoint, context.requestHash],
+            () =>
+                store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 1 }, strict, context)
+        );
+
+        expect(outcome.kind).toBe('in_flight');
+        const state = await readState(owner, merchantId, sku);
+        expect(state.net).toBe(0);
+    });
+});

@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { withTenant } from './pool.js';
+import { releaseAfter, rollBackAfter, withTenant } from './pool.js';
 import { cancelOrder, placeOrder, shipOrder } from '../domain/commands.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../domain/types.js';
 import {
@@ -15,7 +15,7 @@ import {
  *
  * The ledger cannot protect itself. Two transactions can read the same salable
  * quantity and both append, and the ledger will record the oversell. Something
- * has to serialise the read and the write, and there is more than one way to
+ * has to serialize the read and the write, and there is more than one way to
  * do it.
  *
  * - `none` does nothing. Present so the failure can be reproduced on demand
@@ -27,19 +27,41 @@ import {
  *   retries the loser. Nothing blocks, and a contended placement pays for it
  *   by being retried instead.
  *
- * Which of the two correct ones is preferable depends on contention, and that
- * is measured rather than asserted.
+ * Which of the two correct ones is preferable depends on how contended a SKU
+ * is, since a queue costs waiting and a conflict costs a retry.
  */
-export type Strategy = 'none' | 'row_lock' | 'serializable';
+export const STRATEGIES = ['none', 'row_lock', 'serializable'] as const;
+export type Strategy = (typeof STRATEGIES)[number];
+
+const isStrategy = (value: string): value is Strategy =>
+    (STRATEGIES as readonly string[]).includes(value);
+
+/**
+ * Reads the strategy from configuration, and refuses a name it does not know.
+ *
+ * Strict for the same reason the oversell policy is. Only the exact names take
+ * a lock or raise the isolation level, so anything else would run with no
+ * concurrency control at all while looking configured.
+ */
+export const parseStrategy = (raw: string | undefined): Strategy => {
+    if (!raw) return 'row_lock';
+    if (isStrategy(raw)) return raw;
+    throw new Error(
+        `unknown CONCURRENCY_STRATEGY: ${JSON.stringify(raw)}, expected one of ${STRATEGIES.join(', ')}`
+    );
+};
 
 /** Postgres raises this when a serializable transaction loses a conflict. */
 const SERIALIZATION_FAILURE = '40001';
 
+/** Postgres raises this when a wait for a lock runs past lock_timeout. */
+const LOCK_NOT_AVAILABLE = '55P03';
+
 /**
- * Retry budget for serialisation conflicts.
+ * Retry budget for serialization conflicts.
  *
  * Eight rather than five, with backoff between attempts. Retrying a
- * serialisation conflict immediately tends to re-collide with the same
+ * serialization conflict immediately tends to re-collide with the same
  * transactions that caused it, so the attempts are spaced out and jittered.
  * Without the jitter, contending clients retry in lockstep and conflict again
  * together.
@@ -88,6 +110,15 @@ export type Outcome =
     | { readonly kind: 'in_flight' }
     | { readonly kind: 'key_reused' }
     /**
+     * The SKU does not exist for this merchant.
+     *
+     * An outcome rather than an error, because it is an answer about the
+     * catalog and not a fault. Never stored against an idempotency key,
+     * since it describes the catalog at one moment rather than anything that
+     * happened, and replaying it would refuse the order after the SKU exists.
+     */
+    | { readonly kind: 'unknown_sku'; readonly sku: string }
+    /**
      * The retry budget ran out.
      *
      * Contention this heavy is a capacity problem rather than a client
@@ -103,7 +134,7 @@ const readStock = async (
     merchantId: string,
     sku: string,
     lock: boolean
-): Promise<Stock> => {
+): Promise<Stock | undefined> => {
     const { rows } = await client.query<{ sku: string; physical: number }>(
         `select sku, physical from stock where merchant_id = $1 and sku = $2${
             lock ? ' for update' : ''
@@ -111,8 +142,7 @@ const readStock = async (
         [merchantId, sku]
     );
     const row = rows[0];
-    if (!row) throw new Error(`unknown sku: ${sku}`);
-    return { sku: row.sku, physical: row.physical };
+    return row ? { sku: row.sku, physical: row.physical } : undefined;
 };
 
 const readEntries = async (
@@ -199,14 +229,11 @@ const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Pro
 };
 
 /**
- * Runs one decision inside a transaction, under the chosen strategy.
+ * One attempt at a decision, either finished or asking to be repeated.
  *
- * The domain function supplied by the caller does the thinking. This function
- * is only responsible for reading a consistent view, writing the result, and
- * deciding what "consistent" is allowed to mean.
- */
-/**
- * One attempt, either finished or asking to be repeated.
+ * The domain function supplied by the caller does the thinking. An attempt is
+ * only responsible for reading a consistent view, writing the result, and
+ * deciding what consistent is allowed to mean under the chosen strategy.
  *
  * Splitting an attempt from the retry loop keeps connection handling in one
  * place. The connection is released as the attempt unwinds, so the backoff
@@ -223,6 +250,9 @@ const runAttempt = async (
     idempotency: IdempotencyContext | undefined
 ): Promise<Attempt> => {
     const client = await pool.connect();
+    // Whether a lock wait that runs out was a wait on the key or on the work.
+    let claiming = idempotency !== undefined;
+    let failure: unknown;
     try {
         await client.query(
             strategy === 'serializable' ? 'begin isolation level serializable' : 'begin'
@@ -240,6 +270,7 @@ const runAttempt = async (
         // Claimed inside the same transaction as the work, so a key exists
         // only if what it describes does.
         if (idempotency) await claimKey(client, idempotency);
+        claiming = false;
 
         const stock = await readStock(
             client,
@@ -247,6 +278,12 @@ const runAttempt = async (
             command.sku,
             strategy === 'row_lock'
         );
+        if (!stock) {
+            // Rolled back rather than committed, so a key claimed above is
+            // released and a retry once the SKU exists is evaluated afresh.
+            await client.query('rollback');
+            return { done: true, outcome: { kind: 'unknown_sku', sku: command.sku } };
+        }
         const entries = await readEntries(client, command.merchantId, command.sku);
         const result = decide(stock, entries);
 
@@ -264,7 +301,7 @@ const runAttempt = async (
         await client.query(shouldCommit ? 'commit' : 'rollback');
         return { done: true, outcome: { kind: 'applied', result } };
     } catch (error) {
-        await client.query('rollback').catch(() => undefined);
+        failure = await rollBackAfter(client, error);
 
         // The key was already claimed, so this request duplicates one that has
         // run or is still running.
@@ -276,9 +313,22 @@ const runAttempt = async (
         // the work is safe and the repeat sees the winner's effect.
         if (isSerializationFailure(error)) return { done: false };
 
+        /*
+         * A lock wait ran past lock_timeout.
+         *
+         * During the claim, the same key is held by a request that is still
+         * running, which is exactly what in flight describes. Anywhere else it
+         * is a row contended past the point where waiting would help, the
+         * condition a spent serializable retry budget reports, and it gets
+         * the same answer.
+         */
+        if (errorCode(error) === LOCK_NOT_AVAILABLE) {
+            return { done: true, outcome: { kind: claiming ? 'in_flight' : 'contention' } };
+        }
+
         throw error;
     } finally {
-        client.release();
+        releaseAfter(client, failure);
     }
 };
 
@@ -306,50 +356,83 @@ const runCommand = async (
     return { kind: 'contention' };
 };
 
-export const createStore = (pool: pg.Pool, strategy: Strategy) => ({
-    strategy,
+export const createStore = (pool: pg.Pool, strategy: Strategy) => {
+    // Checked here as well as at startup, because a cast anywhere else can still
+    // hand the store a name it does not know, and the cost of not noticing is an
+    // oversell rather than an error.
+    if (!isStrategy(strategy)) {
+        throw new Error(`unknown concurrency strategy: ${JSON.stringify(strategy)}`);
+    }
+    return {
+        strategy,
 
-    placeOrder: (
-        command: Command,
-        policy: OversellPolicy,
-        idempotency?: IdempotencyContext
-    ): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                placeOrder(
-                    { stock, entries, orderId: command.orderId, quantity: command.quantity },
-                    policy
-                ),
-            idempotency
-        ),
+        /**
+         * One SKU's stock and ledger, for a caller reporting on them.
+         *
+         * Repeatable read, so both statements see the same snapshot. Under
+         * read committed each takes its own, and a shipment committing between
+         * them could be half seen, physical stock from before it and the
+         * compensating entry from after, overstating salable quantity.
+         */
+        readInventory: (merchantId: string, sku: string) =>
+            withTenant(
+                pool,
+                merchantId,
+                async (client) => {
+                    const stock = await readStock(client, merchantId, sku, false);
+                    if (!stock) return undefined;
+                    return { stock, entries: await readEntries(client, merchantId, sku) };
+                },
+                'repeatable read'
+            ),
 
-    shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                shipOrder({ stock, entries, orderId: command.orderId, quantity: command.quantity }),
-            idempotency
-        ),
+        placeOrder: (
+            command: Command,
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    placeOrder(
+                        { stock, entries, orderId: command.orderId, quantity: command.quantity },
+                        policy
+                    ),
+                idempotency
+            ),
 
-    cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
-        runCommand(
-            pool,
-            strategy,
-            command,
-            (stock, entries) =>
-                cancelOrder({
-                    stock,
-                    entries,
-                    orderId: command.orderId,
-                    quantity: command.quantity,
-                }),
-            idempotency
-        ),
-});
+        shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    shipOrder({
+                        stock,
+                        entries,
+                        orderId: command.orderId,
+                        quantity: command.quantity,
+                    }),
+                idempotency
+            ),
+
+        cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                command,
+                (stock, entries) =>
+                    cancelOrder({
+                        stock,
+                        entries,
+                        orderId: command.orderId,
+                        quantity: command.quantity,
+                    }),
+                idempotency
+            ),
+    };
+};
 
 export type Store = ReturnType<typeof createStore>;
