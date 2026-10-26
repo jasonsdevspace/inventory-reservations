@@ -1,539 +1,295 @@
 # inventory-reservations
 
-An append-only inventory reservation ledger, and a demonstration that it does not prevent
-overselling on its own.
+An inventory service that keeps two customers from buying the last unit of the same product.
 
-## The problem
+Stock is tracked as an append-only ledger of reservations rather than a single quantity that gets
+decremented. That makes every change auditable and every mistake reversible. A ledger on its own
+still oversells under concurrent orders, though, and this repo shows that with a test and then
+fixes it.
 
-Two customers want the last unit. A correct system sells it once.
+**What's inside**
 
-The naive design keeps a quantity column and decrements it. That is wrong for reasons that have
-nothing to do with concurrency. It cannot tell you why stock is unavailable, it cannot distinguish
-goods that have left the building from goods that are spoken for, and when a cancellation fails to
-restock, there is no record to repair from.
+- A pure domain core with no database or framework code in it
+- Three concurrency strategies, including one that is wrong on purpose so the bug can be reproduced
+- Idempotent writes, so a retried request never places a second order
+- Multi-tenant data, isolated by API key and backed by Postgres row level security
+- A distroless container, health and readiness probes, and structured logs that never contain keys
 
-So this models inventory the way commerce platforms actually do, as a ledger.
+## Dev setup
 
-## The model
+### Prerequisites
 
-Three quantities, kept apart.
+| Tool                                                              | Needed for             | Check with               |
+| ----------------------------------------------------------------- | ---------------------- | ------------------------ |
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | running the service    | `docker compose version` |
+| [Git](https://git-scm.com/downloads)                              | cloning the repo       | `git --version`          |
+| [Node.js 24](https://nodejs.org/)                                 | running the tests only | `node --version`         |
 
-|                      |                                                                        |
-| -------------------- | ---------------------------------------------------------------------- |
-| **Physical stock**   | What is in the warehouse                                               |
-| **Reservations**     | An append-only record of stock committed to orders but not yet shipped |
-| **Salable quantity** | Derived from the two, never stored                                     |
+Docker Desktop includes Compose. On Linux, Docker Engine with the Compose plugin works the same.
 
-Nothing mutates. Every change is an append.
-
-- **An order** appends a negative entry. Physical stock does not move, because the goods have not
-  moved.
-- **A shipment** appends a compensating positive entry and decrements physical stock. Net
-  reservations return to zero.
-- **A cancellation** appends a compensating positive entry and leaves physical stock alone,
-  because nothing ever left.
-
-Worked through, starting with ten units on hand:
-
-| Event              | Physical | Ledger   | Net | Salable |
-| ------------------ | -------- | -------- | --- | ------- |
-| Opening stock      | 10       |          | 0   | 10      |
-| Order for 3 placed | 10       | `-3`     | -3  | 7       |
-| Order shipped      | 7        | `-3, +3` | 0   | 7       |
-
-The shipment moved goods without changing what can be sold. That is the property the whole design
-turns on, and it falls out of the model rather than needing to be maintained.
-
-Had the order been canceled instead, the ledger would read `-3, +3`, physical stock would still
-be 10, and salable would return to 10. The released units become available on the next read, with
-no separate restocking step to forget.
-
-## What the ledger does not do
-
-It does not prevent an oversell.
-
-Two checkouts can evaluate the same ledger at the same moment, both compute a salable quantity of
-one, both be told yes, and both append. The ledger will record the oversell faithfully, because
-recording is all it was ever able to do.
-
-That is not an argument in this repository, it is a test. Twelve simultaneous orders are fired at
-one unit of stock with the concurrency control removed, and **nearly all of them succeed**, typically
-eleven. The test asserts only that more than one does, because one extra acceptance is already an
-oversell and pinning an exact count would make a race test flaky.
-
-The ledger's job is to make damage visible and reversible. Preventing it belongs at the order
-boundary, and conflating the two is how systems end up with neither.
-
-## Protecting the order boundary
-
-Three strategies, one of which is wrong on purpose.
-
-| Strategy       | What it does                                        | Result against one unit           |
-| -------------- | --------------------------------------------------- | --------------------------------- |
-| `none`         | Nothing. Read committed, no lock                    | Oversells, 10 to 12 of 12 succeed |
-| `row_lock`     | `select ... for update` on the stock row            | Exactly one succeeds              |
-| `serializable` | Isolation level detects the conflict, loser retries | Exactly one succeeds              |
-
-`none` exists so the failure can be reproduced on demand rather than described. A test that cannot
-demonstrate the bug cannot prove the fix.
-
-The two correct strategies differ in how they pay for correctness. `row_lock` makes conflicting
-placements for a SKU queue. `serializable` lets them all proceed and makes the losers retry.
-Which is preferable depends on how contended a SKU is, since a queue costs waiting and a conflict
-costs a retry.
-
-The strategy is read strictly. An unknown name used to fall through to a plain transaction with no
-lock, so a one character typo such as `rowlock` quietly switched the protection off, and accepted
-ten to twelve of twelve orders against one unit. It now stops the service at startup.
-
-Retries are bounded and spaced. Repeating a serialization conflict immediately tends to collide
-with the same transactions that caused it, and without jitter contending clients retry in lockstep
-and conflict again together. Past the budget the caller gets a **503** with `Retry-After` rather
-than a driver error, because contention this heavy is a capacity condition and not a client
-mistake. A placement queued behind a row lock for longer than `lock_timeout` gets the same 503, since
-a queue that long is the same condition under the other strategy.
-
-That path exists because CI found it. Five concurrent cancellations under `serializable` exhausted
-a five attempt budget with no backoff, and the raw Postgres error escaped to the caller. It would
-have reached a client as a 500 carrying the name of a database source file.
-
-### Making the race real
-
-The first version of the concurrency tests passed against every strategy, including `none`. They
-were worthless.
-
-Establishing a connection costs more than the whole transaction, so twelve attempts fired at once
-arrived staggered by setup latency, and each committed before the next one read. Nothing ever
-contended. Warming the pool first removes that serialization, and the same twelve attempts then
-overlap properly.
-
-A test now guards against the suite quietly reverting to that state. It asserts that `none`
-**does** oversell under the harness, so if the attempts ever stop contending, the suite says so
-rather than reporting a safety it has not checked.
-
-## Overselling is a policy
-
-Zero oversell is one business choice among several, not a universal rule. Retailers hold stock
-back for walk-in trade. Some take backorders deliberately. A system that hard-codes strict
-enforcement models one retailer rather than the problem, so the policy is an input to the
-decision.
-
-```ts
-type OversellPolicy =
-    | { kind: 'strict' } // sell exactly what is salable
-    | { kind: 'threshold'; holdBack: number } // keep units out of reach of online orders
-    | { kind: 'backorder'; limit: number }; // commit past salable, deliberately
-```
-
-A threshold lowers salable quantity, because the held back units are genuinely not for sale here.
-A backorder does not raise salable quantity, because the stock does not exist. It raises the limit
-on what may be committed, which is a different question and is kept as one.
-
-## Storage
-
-Two tables. `stock` holds physical quantity. `reservations` is the ledger.
-
-The ledger is append only, and the database enforces it rather than trusting callers. A trigger
-refuses every update and delete:
-
-```
-ERROR:  reservations is append only, use a compensating entry instead of DELETE
-```
-
-The model depends on compensation rather than mutation. A cancellation adds a positive entry, it
-does not remove the negative one. Allowing an update would let a caller quietly erase the evidence
-an audit or a reconciliation run depends on.
-
-## Inventory belongs to somebody
-
-Every stock level and every ledger entry belongs to a merchant. Nothing in the schema is global,
-because a quantity that is nobody's is a quantity nobody is accountable for.
-
-The merchant is established by the API key on the request and never by anything the caller says
-about itself. An API that accepts a merchant identifier as a parameter is an API where every
-caller can act as every merchant, and no amount of care further down makes up for that. Keys are
-stored hashed, so a leaked backup does not hand over the ability to place orders.
-
-Two seeded merchants both own a SKU called `DEMO-1`, holding different quantities, which makes the
-point better than prose can:
-
-```
-$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
-{"sku":"DEMO-1","physical":5,"reserved":0,"salable":5}
-
-$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-globex'
-{"sku":"DEMO-1","physical":11,"reserved":0,"salable":11}
-```
-
-An order placed by one is invisible to the other, and a SKU one merchant has never heard of is a
-404 rather than a glimpse of somebody else's catalog.
-
-A missing key and an unrecognized key get the same answer, deliberately, so the response says
-nothing about which keys exist.
-
-Scoping is enforced in layers. The application scopes every query, the ledger carries a composite
-foreign key so a reservation cannot reference another merchant's stock even if a query forgets,
-idempotency keys are scoped per merchant so two merchants choosing the same key cannot collide, and
-row level security, described below, catches a query that forgets anyway.
-
-### What did not change
-
-Adding tenancy did not move the domain core at all. Not one line.
-
-Tenancy is a question about who may act and which rows they may see. It is not a question about
-what inventory means, and the core only knows the second kind of thing. It still takes a stock
-level, some entries and a policy, and still has no idea a merchant exists. Keeping that boundary
-honest is why the change landed in the adapter and the schema rather than spreading through
-everything.
-
-## The API
-
-|                                  |                                                 |
-| -------------------------------- | ----------------------------------------------- |
-| `GET /inventory/:sku`            | Physical, reserved and derived salable quantity |
-| `POST /orders`                   | Commit stock to an order                        |
-| `POST /orders/:id/shipments`     | Ship, in whole or in part                       |
-| `POST /orders/:id/cancellations` | Release, in whole or in part                    |
-| `GET /health`                    | Liveness                                        |
-| `GET /ready`                     | Readiness, which includes the database          |
-
-```
-$ curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
-{"sku":"DEMO-1","physical":5,"reserved":0,"salable":5}
-
-$ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-    -H 'x-api-key: demo-key-acme' -H 'idempotency-key: abc' \
-    -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
-{"entries":[{"sku":"DEMO-1","orderId":"o-1","quantity":-2,"reason":"order_placed"}],"physicalDelta":0}
-
-$ curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-    -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-1","orderId":"o-2","quantity":10}'
-{"error":{"kind":"insufficient_salable","requested":10,"available":3}}
-```
-
-A rejection is a **409**, not a 400. The request was understood and the world does not allow it,
-which is the honest answer when stock ran out between loading a page and submitting an order. A
-400 would blame the caller for something it could not have known. A malformed request really is a
-400, including one carrying a field the API does not understand, because silently ignoring a field
-a client thought mattered is worse than refusing it. An unknown SKU is a 404 on a write, as it is on
-a read.
-
-## Idempotency
-
-A client whose request times out cannot tell whether the order was placed, so it retries. Send an
-`Idempotency-Key` header of up to 255 characters and the retry returns the first answer instead of
-placing a second order.
-
-Three decisions, each with a plausible wrong answer:
-
-**Keys are scoped per endpoint.** The same key on `place` and on `cancel` are different keys.
-Scoping globally would let an unlucky client collide with itself across unrelated operations.
-
-**The request is fingerprinted.** A key reused with different arguments gets a **422** rather than
-a replay, because replaying would answer a question nobody asked. This is the case that turns a
-client bug into a silent data problem when it is not checked.
-
-**The key is claimed in the same transaction as the work.** Writing the key first and the order
-second leaves a window where a crash between them strands a key with no result, and every retry is
-then refused forever. Doing both atomically means a key exists only if the work it describes does.
-
-A duplicate arriving while the original is still running waits for it, because the key's row stays
-locked until the original commits. If the original finishes within `lock_timeout`, the duplicate is
-handed its answer. If it does not, the duplicate gets a **409**, because the honest answer is that
-the outcome is not known yet. A rejection is replayed like any other result, so a retry
-does not quietly succeed because stock arrived in the meantime.
-
-Responses carry `Idempotency-Replayed: true` or `false`, so a client can tell a fresh answer from
-a repeated one without inspecting the body. A replay returns the original status along with the
-original body, so a retried placement is a 201 both times.
-
-## Design
-
-The core is pure. No database, no clock, no framework, no I/O. It takes the current stock level,
-the entries so far, and a policy, and returns the entries to append and the change to physical
-stock. The caller performs the write inside whatever transaction it is running.
-
-```ts
-const result = placeOrder({ stock, entries, orderId: 'o-1', quantity: 3 }, { kind: 'strict' });
-
-if (result.ok) {
-    // result.entries   the appends to make
-    // result.physicalDelta   the change to physical stock, zero for a placement
-}
-```
-
-Commands return a decision rather than throwing. A rejection says what was asked for and what was
-actually available, so a caller can tell a customer something useful instead of a generic failure.
-
-```ts
-{ ok: false, rejection: { kind: 'insufficient_salable', requested: 3, available: 2 } }
-```
-
-That separation is what lets the same logic run behind an HTTP handler, inside a database
-transaction, or in a browser with no database at all.
-
-## Prior art
-
-The model follows Adobe Commerce Multi-Source Inventory, which is publicly documented. The
-separation of physical stock from reservations, the compensating entry on shipment and
-cancellation, and the derived salable quantity are all taken from it. The failure modes it
-exhibits in production, missing reservations inflating salable quantity and missing compensations
-stranding stock, are the reason reconciliation belongs in a system like this rather than being
-assumed unnecessary.
-
-## Running it
-
-Requires Docker. Node 24 as well if you want to run the test suite.
+### Run the service
 
 ```bash
-docker compose up -d --build   # the API on :8080 and Postgres behind it
-curl localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-acme'
+git clone https://github.com/jasonsdevspace/inventory-reservations.git
+cd inventory-reservations
+docker compose up -d --build
 ```
 
-That is the whole setup. No local Node, no local Postgres.
-
-Compose seeds four SKUs so there is something to try immediately.
-
-| SKU              | Physical | Reserved | Salable |                                            |
-| ---------------- | -------- | -------- | ------- | ------------------------------------------ |
-| `DEMO-1`         | 5        | 0        | 5       | ordinary                                   |
-| `DEMO-SCARCE`    | 1        | 0        | 1       | the last unit two people are about to want |
-| `DEMO-PLENTIFUL` | 500      | 0        | 500     | room to apply load                         |
-| `DEMO-COMMITTED` | 10       | -3       | **7**   | arrives mid-story                          |
-
-`DEMO-COMMITTED` is the one to look at first. Ten units on hand, three committed to an order that
-has not shipped, seven available to sell. It is the worked example above, true before anybody has
-done anything, so the difference between physical and salable quantity is visible on the first
-request rather than only after you make one.
+This starts Postgres, applies the schema, loads demo data and serves the API on port 8080. When it
+finishes, check that it is up:
 
 ```bash
-# commit two of the five
-curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'x-api-key: demo-key-acme' -H 'idempotency-key: try-1' \
-  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}'
-
-# send it again, and nothing happens twice
-curl -isX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'x-api-key: demo-key-acme' -H 'idempotency-key: try-1' \
-  -d '{"sku":"DEMO-1","orderId":"o-1","quantity":2}' | grep -i idempotency-replayed
-
-# ask for more than is there
-curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-SCARCE","orderId":"o-2","quantity":4}'
-
-# the other merchant is untouched by any of it
-curl -s localhost:8080/inventory/DEMO-1 -H 'x-api-key: demo-key-globex'
+curl localhost:8080/ready
 ```
 
-Seeding is behind `SEED_DEMO`, which compose sets and production leaves unset.
+```json
+{ "status": "ready" }
+```
 
-To work on it:
+### Run the tests
+
+The tests use the Postgres container started above, so leave it running.
 
 ```bash
 npm ci
-npm run verify      # type-check, lint, format, prose, tests
-npm test            # watch mode
-npm run build       # compile to dist, which is what the image runs
+npm run verify
 ```
 
-The suite has its own database, `reservations_test`, created whenever Postgres initializes its data
-directory, which, since that directory is held in memory, is every fresh start of the container. It truncates and reseeds between cases, so sharing one with the running service would
-mean running the tests silently rewrites whatever the demo was showing.
+`verify` runs type checking, linting, formatting, a prose check and the full test suite. Use
+`npm test` for watch mode while you work.
 
-To try a different policy, override it and restart:
+### Stop it
+
+```bash
+docker compose down
+```
+
+The database lives in memory, so this also clears it. The next `up` starts fresh.
+
+## Try it
+
+Every request needs an API key. The demo data includes two merchants, **Acme**
+(`demo-key-acme`) and **Globex** (`demo-key-globex`), and four products.
+
+| SKU              | On hand | Already reserved | Available |
+| ---------------- | ------- | ---------------- | --------- |
+| `DEMO-1`         | 5       | 0                | 5         |
+| `DEMO-SCARCE`    | 1       | 0                | 1         |
+| `DEMO-PLENTIFUL` | 500     | 0                | 500       |
+| `DEMO-COMMITTED` | 10      | 3                | 7         |
+
+Responses are shown formatted below. Add `| jq` to a command if you have it installed.
+
+**1. Check stock.** `DEMO-COMMITTED` has ten on hand, but three are reserved for an order that has
+not shipped, so seven can be sold. Reservations are stored as negative entries, which is why
+`reserved` reads -3.
+
+```bash
+curl localhost:8080/inventory/DEMO-COMMITTED \
+  --header 'x-api-key: demo-key-acme'
+```
+
+```json
+{ "sku": "DEMO-COMMITTED", "physical": 10, "reserved": -3, "salable": 7 }
+```
+
+**2. Place an order.** The idempotency key makes the request safe to retry.
+
+```bash
+curl localhost:8080/orders \
+  --header 'x-api-key: demo-key-acme' \
+  --header 'content-type: application/json' \
+  --header 'idempotency-key: first-order' \
+  --data '{ "sku": "DEMO-1", "orderId": "order-1", "quantity": 2 }'
+```
+
+```json
+{
+    "entries": [
+        { "sku": "DEMO-1", "orderId": "order-1", "quantity": -2, "reason": "order_placed" }
+    ],
+    "physicalDelta": 0
+}
+```
+
+Run the same command again. You get the same answer and no second order is placed. Add `--include`
+to see the `idempotency-replayed: true` header that marks it as a repeat.
+
+**3. Ship it.** The goods leave the warehouse, so stock on hand drops from 5 to 3. Available stock
+stays at 3, because those two units were already spoken for.
+
+```bash
+curl localhost:8080/orders/order-1/shipments \
+  --header 'x-api-key: demo-key-acme' \
+  --header 'content-type: application/json' \
+  --data '{ "sku": "DEMO-1", "quantity": 2 }'
+
+curl localhost:8080/inventory/DEMO-1 \
+  --header 'x-api-key: demo-key-acme'
+```
+
+```json
+{ "sku": "DEMO-1", "physical": 3, "reserved": 0, "salable": 3 }
+```
+
+**4. Ask for more than exists.** The order is refused with a 409 that says what was available.
+
+```bash
+curl localhost:8080/orders \
+  --header 'x-api-key: demo-key-acme' \
+  --header 'content-type: application/json' \
+  --data '{ "sku": "DEMO-SCARCE", "orderId": "order-2", "quantity": 4 }'
+```
+
+```json
+{ "error": { "kind": "insufficient_salable", "requested": 4, "available": 1 } }
+```
+
+**5. Switch merchants.** Globex has its own `DEMO-1`, untouched by anything Acme did.
+
+```bash
+curl localhost:8080/inventory/DEMO-1 \
+  --header 'x-api-key: demo-key-globex'
+```
+
+```json
+{ "sku": "DEMO-1", "physical": 11, "reserved": 0, "salable": 11 }
+```
+
+### All endpoints
+
+| Endpoint                         | What it does                                    |
+| -------------------------------- | ----------------------------------------------- |
+| `GET /inventory/:sku`            | Stock on hand, reserved and available           |
+| `POST /orders`                   | Reserve stock for an order                      |
+| `POST /orders/:id/shipments`     | Ship some or all of an order                    |
+| `POST /orders/:id/cancellations` | Release some or all of an order                 |
+| `GET /health`                    | Whether the process is alive                    |
+| `GET /ready`                     | Whether it can serve traffic, database included |
+
+## How it works
+
+### The ledger
+
+Each product has a physical quantity and a list of reservation entries. Entries are never updated
+or deleted, and a database trigger enforces that.
+
+- **Placing an order** adds a negative entry. Physical stock does not move.
+- **Shipping** adds a matching positive entry and lowers physical stock.
+- **Canceling** adds a matching positive entry and leaves physical stock alone.
+
+Available stock is physical stock plus the sum of the entries. It is computed on every read and
+never stored, so it cannot drift.
+
+### Preventing oversells
+
+The ledger records an oversell faithfully but does nothing to stop one. Two checkouts can read the
+same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks the protection.
+
+| Strategy             | How it works                                        | Twelve orders for one unit |
+| -------------------- | --------------------------------------------------- | -------------------------- |
+| `none`               | No protection, kept to prove the bug is real        | 10 to 12 succeed           |
+| `row_lock` (default) | Locks the stock row, so orders for a SKU queue      | exactly 1 succeeds         |
+| `serializable`       | Postgres detects the conflict and the loser retries | exactly 1 succeeds         |
+
+The test suite asserts that `none` really does oversell. If the race test ever stops producing
+real contention, it fails instead of quietly passing.
+
+### Oversell policy
+
+Not every business wants zero oversell. `OVERSELL_POLICY` sets the rule.
+
+| Policy        | Meaning                                                |
+| ------------- | ------------------------------------------------------ |
+| `strict`      | Sell only what is available (default)                  |
+| `threshold:N` | Hold N units back, for example for in-store customers  |
+| `backorder:N` | Allow up to N units past what is available, on purpose |
+
+To try one, restart the API with it set:
 
 ```bash
 OVERSELL_POLICY=backorder:10 docker compose up -d --force-recreate api
-curl -sX POST localhost:8080/orders -H 'content-type: application/json' \
-  -H 'x-api-key: demo-key-acme' -d '{"sku":"DEMO-SCARCE","orderId":"o-9","quantity":6}'
 ```
 
-With one unit on hand and a backorder limit of ten, that order is accepted and salable quantity
-goes to minus five. Under the default `strict` it is refused. The policy is server configuration
-rather than a request parameter, because letting a caller choose would make `backorder` something
-anyone could ask for.
+### Idempotency
 
-The integration tests talk to a real Postgres rather than a fake, because the behavior under test
-belongs to the database. Row locking, isolation levels and serialization failures cannot be
-demonstrated against a stub. `DATABASE_URL` and `APP_DATABASE_URL` override the owner and service
-connections, and both default to the compose service, so a developer who has run compose needs no
-configuration at all.
+Send an `Idempotency-Key` header and a retried request gets the original response instead of
+doing the work twice. Keys are scoped per merchant and per endpoint. Reusing a key with a different
+request body returns a 422. The key is saved in the same transaction as the order, so a crash can
+never leave one without the other.
 
-`npm run prose` fails on em dashes, semicolons joining clauses in prose, and process artifacts
-such as `TODO` markers or notes about pending decisions. Comments here explain why the code is the
-way it is. They do not track what is undone.
+### Security
 
-## What the service is allowed to do
+- **The API key decides the merchant.** No request can name a different merchant. Keys are stored
+  hashed.
+- **Every query is scoped by merchant, and Postgres checks it again.** With row level security, a
+  query that forgets its filter still sees only one merchant's rows.
+- **The service runs with minimal database rights.** It cannot delete anything or change the
+  schema. Migrations and cleanup run separately, as the owner. The service refuses to start with
+  credentials that would bypass row level security.
 
-The application connects as a role that cannot drop a table, cannot run DDL, and **cannot delete
-anything anywhere**.
+### Reliability
 
-| Table              | Application role may         |
-| ------------------ | ---------------------------- |
-| `merchants`        | `select`                     |
-| `stock`            | `select`, `update`           |
-| `reservations`     | `select`, `insert`           |
-| `idempotency_keys` | `select`, `insert`, `update` |
+- `/health` and `/ready` are separate, so a database outage takes instances out of rotation
+  without restarting them. They recover on their own when it returns.
+- Every database call has a timeout on both sides, so a stalled database produces fast errors
+  rather than hung requests.
+- Errors returned to clients never include internal details. Each response carries an
+  `X-Request-Id` that matches the server log.
 
-That turns the append only property from a promise into a privilege. The trigger enforcing it is
-installed by the owner and cannot be dropped by the role whose appends it governs. Retention,
-which deletes expired idempotency keys, runs as the owner on a schedule rather than being
-something a request handler could be talked into triggering.
+## Project layout
 
-The service checks this at startup. Row level security does not bind a table's owner or a
-superuser, so connecting the service with the owner's credentials, the usual one user shortcut,
-would switch the backstop below off with no error anywhere. It refuses to start as any role the
-policies do not bind.
-
-Migrations are a deployment step, not something the service does to itself on startup. A service
-that migrates itself is a service whose runtime credentials can drop its tables.
-
-Timeouts belong to the role, so every session gets them without the application having to
-remember:
+Each module sits in its own folder with its tests and any files it reads.
 
 ```
-statement_timeout = 5s
-lock_timeout = 3s
-idle_in_transaction_session_timeout = 10s
+src/
+├── domain/            business logic, no I/O
+│   ├── commands/      place, ship and cancel
+│   ├── ledger/        quantities derived from the entries
+│   ├── types.ts       shared types
+│   └── index.ts       public entry point
+├── http/              the API
+│   ├── server/        routes, validation and error responses
+│   ├── policy/        reads OVERSELL_POLICY
+│   └── main.ts        starts the service
+└── postgres/          everything that talks to the database
+    ├── store/         runs commands under each concurrency strategy
+    ├── idempotency/   stored responses, plus the cleanup job
+    ├── pool/          connections, tenancy and timeouts
+    ├── merchants/     API key lookup
+    ├── migrate/       schema, roles and the migration command
+    ├── seed/          demo data
+    ├── security/      tests for tenant isolation and database rights
+    └── testkit/       shared test helpers
 ```
 
-`lock_timeout` matters most. The row lock strategy queues placements for a SKU behind each other,
-and an unbounded wait turns a busy product into a hung request.
+## Configuration
 
-## Row level security
+Everything is set through environment variables. The defaults match the Compose setup, so local
+development needs none of them.
 
-Every query the service issues is already scoped by merchant. This is the answer to what happens
-when one is not, through a bug, a refactor, or a query somebody adds in a hurry.
+| Variable                | Used by   | Meaning                                   | Default         |
+| ----------------------- | --------- | ----------------------------------------- | --------------- |
+| `APP_DATABASE_URL`      | service   | connection as the restricted app role     | Compose service |
+| `PORT`                  | service   | port to listen on                         | `8080`          |
+| `CONCURRENCY_STRATEGY`  | service   | `none`, `row_lock` or `serializable`      | `row_lock`      |
+| `OVERSELL_POLICY`       | service   | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
+| `DATABASE_URL`          | migration | connection as the owner                   | Compose service |
+| `APP_DB_PASSWORD`       | migration | password given to the app role            | development one |
+| `SEED_DEMO`             | migration | `true` loads the demo merchants and stock | unset           |
+| `IDEMPOTENCY_RETENTION` | cleanup   | how long to keep idempotency keys         | `24 hours`      |
 
-```sql
-create policy stock_tenant_isolation on stock
-    using (merchant_id = current_setting('app.merchant_id', true))
-    with check (merchant_id = current_setting('app.merchant_id', true));
-```
-
-The merchant is read from a setting the application writes with `set_config(..., true)`, the form
-of `SET LOCAL` that accepts a parameter, inside each transaction. Transaction local rather than
-session level, because connections are pooled and reused: a session level setting outlives the
-request that made it and hands the next caller the previous caller's tenancy.
-
-A query that forgets its `where` clause returns one merchant's rows rather than everybody's. A
-query issued outside a transaction has no tenancy and returns nothing at all, which is the right
-way for it to fail. Writing a row belonging to another merchant is refused by the policy rather
-than by a code review.
-
-### This found a real bug
-
-Turning the policies on broke the idempotency replay path, and it deserved to.
-
-The lookup that decides whether a duplicate request should be replayed ran outside a transaction,
-so under row level security it had no tenancy and found nothing. Every duplicate would have been
-told the original was still in flight, forever, instead of being handed its answer. The tests that
-caught it were passing happily the day before, because without policies an unscoped read quietly
-worked.
-
-### So did a review
-
-A later review found one query the application did not scope. Recording an idempotency result
-matched on key and endpoint but not on merchant. Row level security narrowed it to the current
-tenant, which is why every behavioral test passed, but the policies do not bind the table's owner.
-Run as the owner, the update overwrote every merchant's stored answer for a shared key, so a retry
-could have replayed one merchant's order to another.
-
-The query is scoped now. A test runs it as the owner, so it checks the application's own scoping
-rather than crediting the backstop, and the service refuses to start as a role the policies do not
-bind.
-
-## Operability
-
-**Liveness and readiness answer different questions.** Liveness asks whether the process should be
-restarted. Readiness asks whether it should receive traffic. Conflating them means a database
-outage either restart loops every healthy instance or leaves them all accepting requests they
-cannot serve.
-
-```
-database up      /health 200   /ready 200
-database gone    /health 200   /ready 503   process stays up, zero restarts
-database back    /health 200   /ready 200   recovers without intervention
-```
-
-Getting there took fixing a crash. An idle client that loses its connection emits an error on the
-pool, and an unhandled error event on an EventEmitter takes the process down, so losing Postgres
-for a moment did not degrade the service, it killed it. Handled at the pool rather than at each
-call site, because the point is to catch the one nobody remembered to handle.
-
-**Logs are structured and redact the credential.** An access log containing the API key that
-authorized the request turns log retention into credential retention, and anybody who can read
-logs can place orders.
-
-```json
-{"level":30,"reqId":"req-4","req":{"method":"GET","url":"/inventory/DEMO-1"},"msg":"incoming request"}
-{"level":30,"reqId":"req-4","res":{"statusCode":200},"responseTime":19.4,"msg":"request completed"}
-```
-
-Every response carries `X-Request-Id`, so a caller can quote an identifier that ties their report
-to the line explaining it.
-
-**Nothing internal reaches a client.** During the outage above, the caller received this:
-
-```json
-{ "error": { "kind": "internal", "requestId": "req-s" } }
-```
-
-The log recorded a failed password for a specific database role. The client was told none of it.
-
-**Limits are chosen rather than inherited.** A client gets ten seconds to finish sending a request,
-so a slow sender cannot hold a connection open indefinitely. A 16KB body limit, well above any
-legitimate order and well below anything worth buffering. Identifiers are bounded at the edge, SKUs
-and order ids at 100 characters because both travel in paths, and idempotency keys at 255.
-
-**Every wait on the database has a limit on this side too.** The role's timeouts are enforced by the
-server, so they protect nothing when the server stops answering rather than going away, through a
-stall, a failover, or a network path that drops packets. Connections time out after two seconds and
-queries after six, just above `statement_timeout`, so a live server always answers first. Readiness
-answers within one second. With Postgres frozen rather than stopped:
-
-```
-database frozen   /ready 503 in 1s   requests fail in 2s
-database thawed   /ready 200         recovers without a restart
-```
-
-A connection the driver gave up on is destroyed rather than reused, because the query can still be
-running on it.
-
-**Retention runs as maintenance, not as a side effect.**
+Expired idempotency keys are removed by a separate job, meant to run on a schedule:
 
 ```bash
-npm run retention              # purges idempotency keys older than 24 hours
-IDEMPOTENCY_RETENTION='7 days' npm run retention
+npm run retention
 ```
 
-Run by a scheduler rather than by the service, because the application role has no delete
-privilege anywhere and should not acquire one so that a request handler can tidy up.
+## Background
 
-## The container
-
-Multi-stage, ending on `gcr.io/distroless/nodejs24-debian12`. The final image has no shell, no
-package manager and no general purpose userland, so there is nothing to pivot to if the process is
-compromised. It runs as the unprivileged `nonroot` user. Dev dependencies are resolved in a
-separate stage and never reach it. The build stages use Debian 12, the release the runtime is based
-on, so a native dependency is compiled against the C library it will run with.
-
-Configuration is environment only, so the same image runs locally and in production with no
-rebuild.
-
-| Variable                | Read by   | Meaning                                            | Default         |
-| ----------------------- | --------- | -------------------------------------------------- | --------------- |
-| `APP_DATABASE_URL`      | service   | connection as the application role                 | compose service |
-| `PORT`                  | service   | listen port                                        | `8080`          |
-| `CONCURRENCY_STRATEGY`  | service   | `none`, `row_lock` or `serializable`, nothing else | `row_lock`      |
-| `OVERSELL_POLICY`       | service   | `strict`, `threshold:N` or `backorder:N`           | `strict`        |
-| `DATABASE_URL`          | migration | connection as the owner, also used by retention    | compose service |
-| `APP_DB_PASSWORD`       | migration | password set on the application role               | development one |
-| `SEED_DEMO`             | migration | `true` seeds the demo merchants and SKUs           | unset           |
-| `IDEMPOTENCY_RETENTION` | retention | how old a key must be before it is purged          | `24 hours`      |
-
-The service never sees the owner's connection string, which is what keeps its credentials from
-being able to drop its own tables.
+The model follows Adobe Commerce Multi-Source Inventory, which is publicly documented. Physical
+stock is kept apart from reservations, shipments and cancellations add compensating entries, and
+available stock is derived rather than stored.
 
 ## License
 
