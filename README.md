@@ -285,6 +285,10 @@ same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks
 The test suite asserts that `none` really does oversell. If the race test ever stops producing
 real contention, it fails instead of quietly passing.
 
+What each correct strategy costs as more buyers compete is measured in the
+[contention benchmark](docs/benchmarks/results.md). Run `npm run bench` with the containers up to
+reproduce it on your machine.
+
 </details>
 
 <details>
@@ -383,6 +387,7 @@ src/
 └── postgres/          everything that talks to the database
     ├── store/         runs commands under each concurrency strategy
     ├── holds/         the job that records expired holds
+    ├── bench/         the contention benchmark
     ├── idempotency/   stored responses, plus the cleanup job
     ├── pool/          connections, tenancy and timeouts
     ├── merchants/     API key lookup

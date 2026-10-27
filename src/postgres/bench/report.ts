@@ -96,12 +96,10 @@ ${table(
     ]
 )}
 
-Each scenario places ${report.ordersPerScenario} single-unit orders through the store, as the
-service role, against the Postgres container from \`docker-compose.yml\`. It runs
-${report.runsPerScenario} times after an unmeasured warm-up, and the run with the median
-throughput is shown. There is always enough stock, so a refused order means a strategy gave up,
-not that the shelf ran out. Latency is per order as the caller sees it, waiting and retries
-included.
+Each scenario places ${report.ordersPerScenario} single-unit orders through the store, as the service role.
+It runs ${report.runsPerScenario} times after an unmeasured warm-up, and the run with the median throughput is shown.
+There is always enough stock, so an order that gave up was refused by the strategy, not by an empty shelf.
+Latency is per order as the caller sees it, waiting and retries included.
 
 ## One unit, many buyers
 
