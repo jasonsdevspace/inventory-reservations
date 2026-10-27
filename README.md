@@ -2,10 +2,9 @@
 
 An inventory service that keeps two customers from buying the last unit of the same product.
 
-Stock is tracked as an append-only ledger of reservations rather than a single quantity that gets
-decremented. That makes every change auditable and every mistake reversible. A ledger on its own
-still oversells under concurrent orders, though, and this repo shows that with a test and then
-fixes it.
+**[Try it in your browser](https://jasonsdevspace.github.io/inventory-reservations/).** The demo runs
+this service's own store code against Postgres in the page, with the same schema, roles and row
+level security as a deployment. Nothing to install.
 
 **Why I built it**
 
@@ -15,19 +14,86 @@ small, complete example of how I approach that kind of problem. Model the domain
 the failure with a test before fixing it, and treat security and operations as part of the work
 from the start.
 
-**[Try it in your browser](https://jasonsdevspace.github.io/inventory-reservations/).** The demo runs
-this service's own store code against Postgres in the page, with the same schema, roles and row
-level security as a deployment. Nothing to install.
+## The short version
 
-**What's inside**
+**The problem.** A product has one unit left and two checkouts ask for it at the same moment. Both
+read one available, both are told yes, and the store has sold something it does not have. The
+usual design, one quantity that each order decrements, also loses the reason behind every change,
+so when the warehouse count disagrees there is nothing to compare it with.
 
-- A pure domain core with no database or framework code in it
-- Three concurrency strategies, including one that is wrong on purpose so the bug can be reproduced
-- Idempotent writes, so a retried request never places a second order
-- Checkout holds that expire on their own, so an abandoned cart never keeps stock off sale
-- A reconciliation command that finds a ledger gone wrong, and leaves the fix to a person
-- Multi-tenant data, isolated by API key and backed by Postgres row level security
-- A distroless container, health and readiness probes, and structured logs that never contain keys
+**The constraints.**
+
+- Every commitment of stock has to be explainable afterward, so no ledger entry is ever updated or
+  deleted.
+- The last unit must sell exactly once under real concurrency, proven by a test that fails without
+  the fix.
+- A retried request must never order twice, and an abandoned checkout must never keep stock off
+  sale.
+- Merchants share one database and must never see each other's stock, even through a query with a
+  bug in it.
+
+**The outcome.**
+
+- Physical stock, what is in the warehouse, is one number that changes only when goods ship. What is
+  promised to orders is an append-only ledger beside it, and available stock is worked out from the
+  two on every read, so it cannot drift.
+- The ledger alone would still oversell, so orders for the same product take a row lock and queue,
+  and each one reads the order before it. The last unit sells exactly once.
+- The cost is waiting. On a hot product orders take turns, so latency grows with the queue and one
+  product's throughput has a ceiling. In the [benchmark](docs/benchmarks/results.md), run on a
+  laptop with 32 buyers on one product, row locking held about 700 orders a second with the slowest
+  1% at 56 ms and none refused. Serializable transactions, which retry instead of waiting, fell to
+  about 320 a second, with the slowest 1% at 584 ms and some orders refused once retries ran out.
+- Retried requests are answered from an idempotency key, checkout holds expire on their own, and a
+  reconciliation job reports any ledger that breaks the rules.
+- Tenancy is enforced twice, by the API key and by Postgres row level security, and the service
+  runs as a role that cannot delete anything.
+- It ships as a distroless container with health and readiness probes, scheduled jobs that run from
+  the same image, and logs that never contain keys.
+
+## Decisions
+
+Each record names the option it rejected and what the choice costs.
+
+1. [A ledger instead of a quantity](docs/decisions/0001-a-ledger-instead-of-a-quantity.md). A full
+   history instead of a number that gets changed, at the cost of reads that grow with it.
+2. [Row locking over serializable transactions](docs/decisions/0002-row-lock-over-serializable.md).
+   Orders for one product wait in line, which caps that product's throughput, rather than retrying,
+   which the benchmark showed costing far more, even when every buyer ordered a different product.
+3. [Idempotency keys](docs/decisions/0003-idempotency-keys.md). Claimed in the same transaction as
+   the work, and kept long enough to outlast every caller's retries.
+4. [Checkout holds, and how they expire](docs/decisions/0004-checkout-holds-and-expiry.md). Skipped
+   on read the moment they expire, and recorded by a cleanup job afterward, rather than either alone.
+5. [Reconciliation detects, and does not repair](docs/decisions/0005-reconciliation-detects-but-does-not-repair.md).
+   An automatic fix would guess, and write a second mistake over the first.
+
+<details>
+<summary><b>Where a stale answer is acceptable</b>, and where it is not</summary>
+
+| Read                              | Can it be stale? | Why                                                                      |
+| --------------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| Available stock on a product page | Yes              | Nothing is promised until the order is placed                            |
+| Placing an order or a hold        | No               | Read and written under the row lock, in one transaction                  |
+| Converting a hold into an order   | No               | Under the same lock, with the time read after waiting for it             |
+| Recording that a hold expired     | Yes, until a run | Reads already skip an expired hold, so the record only completes history |
+| Removing old idempotency keys     | Yes              | A key only has to outlast the caller's retries                           |
+| Reconciliation's report           | Yes, by a day    | It finds mistakes in history, and no customer waits on it                |
+
+</details>
+
+<details>
+<summary><b>What this does not handle</b></summary>
+
+- Several warehouses or stock sources per product. Each product has one physical quantity.
+- Payments, carts and accounts. A checkout hold is the only checkout concept.
+- An order covering several products at once. Every command locks one stock row, and locking
+  several would need a fixed order to avoid deadlocks, as decision record 2 notes.
+- Receiving goods or recording a stock count through the API. Physical stock changes only when an
+  order ships, and an operator corrects the ledger with an `adjustment` entry.
+- Periodic balances for products with very long histories, the remedy decision record 1 describes.
+- Authentication beyond API keys, such as user accounts or per-user permissions.
+
+</details>
 
 ## Dev setup
 
@@ -85,8 +151,8 @@ Use `npm test` instead for watch mode while you work.
 
 ### Stop it
 
-Stop and remove the containers. The database lives in memory, so this also clears it, and the next
-`up` starts fresh.
+Stop and remove the containers. For development the database is kept in memory rather than on disk,
+so this also clears it, and the next `up` starts fresh.
 
 ```bash
 docker compose down
@@ -95,7 +161,8 @@ docker compose down
 ## Try it
 
 Every request needs an API key. The demo data includes two merchants, **Acme**
-(`demo-key-acme`) and **Globex** (`demo-key-globex`), and four products.
+(`demo-key-acme`) and **Globex** (`demo-key-globex`). Acme starts with these four products, and
+Globex with 11 of its own `DEMO-1`.
 
 | SKU              | On hand | Already reserved | Available |
 | ---------------- | ------- | ---------------- | --------- |
