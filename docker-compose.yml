@@ -47,6 +47,51 @@ services:
             migrate:
                 condition: service_completed_successfully
 
+    # The scheduled jobs, run the way production runs them: the same image as
+    # the service, with the command swapped, rather than through npm, which
+    # the image does not contain. In the `jobs` profile, so `docker compose up`
+    # leaves them alone, and each runs once on demand:
+    #
+    #   docker compose run --rm reconcile
+    #
+    # Retention deletes, so it connects as the owner. The other two connect as
+    # the service's role and are bound by the same policies it is.
+    retention:
+        build: .
+        profiles: ['jobs']
+        command: ['dist/postgres/idempotency/retention-cli.js']
+        environment:
+            DATABASE_URL: postgres://reservations:reservations@postgres:5432/reservations
+            IDEMPOTENCY_RETENTION: ${IDEMPOTENCY_RETENTION:-24 hours}
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+
+    expire-holds:
+        build: .
+        profiles: ['jobs']
+        command: ['dist/postgres/holds/expire-cli.js']
+        environment:
+            APP_DATABASE_URL: postgres://reservations_app:reservations_app@postgres:5432/reservations
+            CONCURRENCY_STRATEGY: ${CONCURRENCY_STRATEGY:-row_lock}
+            HOLD_SWEEP_LOOKBACK: ${HOLD_SWEEP_LOOKBACK:-7 days}
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+
+    reconcile:
+        build: .
+        profiles: ['jobs']
+        command: ['dist/postgres/reconcile/reconcile-cli.js']
+        environment:
+            APP_DATABASE_URL: postgres://reservations_app:reservations_app@postgres:5432/reservations
+            CONCURRENCY_STRATEGY: ${CONCURRENCY_STRATEGY:-row_lock}
+            OVERSELL_POLICY: ${OVERSELL_POLICY:-strict}
+            HOLD_SWEEP_LOOKBACK: ${HOLD_SWEEP_LOOKBACK:-7 days}
+        depends_on:
+            migrate:
+                condition: service_completed_successfully
+
     postgres:
         image: postgres:18-alpine
         environment:

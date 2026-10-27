@@ -1,6 +1,6 @@
 # 5. Reconciliation detects, and does not repair
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
@@ -58,10 +58,12 @@ visible in the history like any other.
 - The checks are only as complete as the rules above. A mistake that leaves every rule intact,
   such as an order placed for the wrong customer, is outside what a ledger can know.
 
-## How it will be tested
+## How it is tested
 
 - One test per rule that writes the broken history directly as the owner, bypassing the commands,
-  and asserts reconciliation reports it.
-- A test that a correct history, including holds, conversions and partial shipments, reports
-  nothing.
-- A test that it writes nothing, whatever it finds.
+  and asserts reconciliation reports it, with the merchant it belongs to.
+- An oversell let through by a deployment running with no concurrency control, found afterward.
+- A history built entirely through the commands, with partial shipments, cancellations,
+  conversions, releases and an active hold, which reports nothing.
+- A hold the cleanup job can still reach is not reported, and one it cannot is.
+- It writes nothing, whatever it finds.
