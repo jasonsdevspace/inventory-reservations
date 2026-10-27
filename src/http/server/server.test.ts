@@ -197,7 +197,7 @@ describe('reading inventory', () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
         const response = await get(`/inventory/${sku}`);
 
-        expect(response.json()).toEqual({ sku, physical: 10, reserved: -3, held: 0, salable: 7 });
+        expect(response.json()).toEqual({ sku, onHand: 10, reserved: 3, held: 0, available: 7 });
     });
 });
 
@@ -208,7 +208,7 @@ describe('shipping and canceling', () => {
 
         expect(ship.statusCode).toBe(201);
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 7, reserved: 0, held: 0, salable: 7 });
+        expect(inventory.json()).toEqual({ sku, onHand: 7, reserved: 0, held: 0, available: 7 });
     });
 
     it('cancels and returns the stock to the shelf', async () => {
@@ -216,7 +216,7 @@ describe('shipping and canceling', () => {
         await post('/orders/o-1/cancellations', { sku, quantity: 3 });
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: 0, salable: 10 });
+        expect(inventory.json()).toEqual({ sku, onHand: 10, reserved: 0, held: 0, available: 10 });
     });
 
     it('refuses to ship more than the order has outstanding', async () => {
@@ -247,7 +247,7 @@ describe('idempotency over HTTP', () => {
         expect(second.headers['idempotency-replayed']).toBe('true');
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toMatchObject({ reserved: -3 });
+        expect(inventory.json()).toMatchObject({ reserved: 3 });
     });
 
     it('refuses a key reused with different arguments', async () => {
@@ -282,7 +282,7 @@ describe('idempotency over HTTP', () => {
             });
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toMatchObject({ reserved: -3 });
+        expect(inventory.json()).toMatchObject({ reserved: 3 });
     });
 });
 
@@ -398,9 +398,9 @@ describe('tenancy', () => {
     });
 
     it('shows each merchant its own quantity for the same SKU', async () => {
-        expect((await get(`/inventory/${sku}`)).json()).toMatchObject({ physical: 10 });
+        expect((await get(`/inventory/${sku}`)).json()).toMatchObject({ onHand: 10 });
         expect((await get(`/inventory/${sku}`, otherApiKey)).json()).toMatchObject({
-            physical: 99,
+            onHand: 99,
         });
     });
 
@@ -408,12 +408,12 @@ describe('tenancy', () => {
         await place({ sku, orderId: 'o-1', quantity: 4 });
 
         expect((await get(`/inventory/${sku}`)).json()).toMatchObject({
-            reserved: -4,
-            salable: 6,
+            reserved: 4,
+            available: 6,
         });
         expect((await get(`/inventory/${sku}`, otherApiKey)).json()).toMatchObject({
             reserved: 0,
-            salable: 99,
+            available: 99,
         });
     });
 
@@ -585,7 +585,7 @@ describe('checkout holds', () => {
         });
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: -3, salable: 7 });
+        expect(inventory.json()).toEqual({ sku, onHand: 10, reserved: 0, held: 3, available: 7 });
     });
 
     it("expires after the merchant's hold lifetime", async () => {
@@ -603,7 +603,7 @@ describe('checkout holds', () => {
         expect(response.statusCode).toBe(201);
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: -3, held: 0, salable: 7 });
+        expect(inventory.json()).toEqual({ sku, onHand: 10, reserved: 3, held: 0, available: 7 });
     });
 
     it('converts once, even when the client retries with the same key', async () => {
@@ -625,7 +625,7 @@ describe('checkout holds', () => {
         expect(retry.headers['idempotency-replayed']).toBe('true');
         expect(retry.json()).toEqual(first.json());
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toMatchObject({ reserved: -3 });
+        expect(inventory.json()).toMatchObject({ reserved: 3 });
     });
 
     it('answers an expired hold with 410 and what is available instead', async () => {
@@ -640,7 +640,7 @@ describe('checkout holds', () => {
     it('stops counting an expired hold before the cleanup job has run', async () => {
         await expiredHold('h-1', 3);
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: 0, salable: 10 });
+        expect(inventory.json()).toEqual({ sku, onHand: 10, reserved: 0, held: 0, available: 10 });
     });
 
     it('answers a hold that was never placed with 404', async () => {
@@ -674,7 +674,7 @@ describe('checkout holds', () => {
         expect(response.statusCode).toBe(201);
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toMatchObject({ held: 0, salable: 10 });
+        expect(inventory.json()).toMatchObject({ held: 0, available: 10 });
     });
 
     it('keeps one merchant from acting on another merchant hold', async () => {
