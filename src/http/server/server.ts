@@ -432,16 +432,27 @@ export const createServer = async ({
             return response.status(404).send({ error: { kind: 'unknown_sku', sku } });
         }
         const { stock, entries, now } = inventory;
-        // Holds are reported apart from orders, so a merchant can see how
-        // much stock is sitting in checkouts. Negative like reserved, since
-        // both are stock spoken for.
-        const held = activelyHeld(entries, now);
+        /*
+         * Counts of units, as a client expects them.
+         *
+         * The ledger stores a commitment as a negative entry, which is what
+         * lets one sum explain every unit, but that is how storage works and
+         * not something a caller should have to know. So each figure here is
+         * a plain count: units on hand, units reserved for orders, units held
+         * in checkouts, and units that can still be sold. Holds are reported
+         * apart from orders, so a merchant can see how much stock is sitting
+         * in carts. Available goes below zero only when more is committed
+         * than exists, which a backorder policy allows on purpose.
+         */
+        // Negating an empty sum gives negative zero, which JSON writes as 0
+        // but strict comparisons do not treat as zero.
+        const reserved = -reservedForOrders(entries);
         return response.send({
             sku,
-            physical: stock.physical,
-            reserved: reservedForOrders(entries),
-            held: held === 0 ? 0 : -held,
-            salable: salableQuantity(stock, entries, policy, now),
+            onHand: stock.physical,
+            reserved: reserved === 0 ? 0 : reserved,
+            held: activelyHeld(entries, now),
+            available: salableQuantity(stock, entries, policy, now),
         });
     });
 

@@ -177,8 +177,7 @@ Responses are shown formatted below. Add `| jq` to a command if you have it inst
 <summary><b>1. Check stock</b>: reserved units are not for sale</summary>
 
 `DEMO-COMMITTED` has ten on hand, but three are reserved for an order that has
-not shipped, so seven can be sold. Reservations are stored as negative entries, which is why
-`reserved` reads -3. `held` counts stock set aside in checkouts, covered in step 6.
+not shipped, so seven are available. `held` counts units set aside in checkouts, covered in step 6.
 
 ```bash
 curl localhost:8080/inventory/DEMO-COMMITTED \
@@ -186,7 +185,7 @@ curl localhost:8080/inventory/DEMO-COMMITTED \
 ```
 
 ```json
-{ "sku": "DEMO-COMMITTED", "physical": 10, "reserved": -3, "held": 0, "salable": 7 }
+{ "sku": "DEMO-COMMITTED", "onHand": 10, "reserved": 3, "held": 0, "available": 7 }
 ```
 
 </details>
@@ -235,7 +234,7 @@ curl localhost:8080/inventory/DEMO-1 \
 ```
 
 ```json
-{ "sku": "DEMO-1", "physical": 3, "reserved": 0, "held": 0, "salable": 3 }
+{ "sku": "DEMO-1", "onHand": 3, "reserved": 0, "held": 0, "available": 3 }
 ```
 
 </details>
@@ -269,7 +268,7 @@ curl localhost:8080/inventory/DEMO-1 \
 ```
 
 ```json
-{ "sku": "DEMO-1", "physical": 11, "reserved": 0, "held": 0, "salable": 11 }
+{ "sku": "DEMO-1", "onHand": 11, "reserved": 0, "held": 0, "available": 11 }
 ```
 
 </details>
@@ -291,7 +290,7 @@ curl localhost:8080/inventory/DEMO-SCARCE \
 ```
 
 ```json
-{ "sku": "DEMO-SCARCE", "physical": 1, "reserved": 0, "held": -1, "salable": 0 }
+{ "sku": "DEMO-SCARCE", "onHand": 1, "reserved": 0, "held": 1, "available": 0 }
 ```
 
 When the payment goes through, convert the hold into an order. This never fails for lack of
