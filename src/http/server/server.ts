@@ -8,7 +8,7 @@ import {
     type Merchant,
 } from '../../postgres/merchants/merchants.js';
 import { createStore, type Outcome, type Strategy } from '../../postgres/store/store.js';
-import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js';
+import { activelyHeld, reservedForOrders, salableQuantity } from '../../domain/ledger/ledger.js';
 import type { OversellPolicy, Rejection } from '../../domain/types.js';
 
 /**
@@ -113,6 +113,32 @@ const amendmentBody = {
     },
 } as const;
 
+const holdBody = {
+    type: 'object',
+    required: ['sku', 'holdId', 'quantity'],
+    additionalProperties: false,
+    properties: {
+        sku: identifier,
+        holdId: identifier,
+        quantity: { type: 'integer', minimum: 1 },
+    },
+} as const;
+
+/** Acting on an existing hold needs only the SKU it is on. */
+const holdActionBody = {
+    type: 'object',
+    required: ['sku'],
+    additionalProperties: false,
+    properties: { sku: identifier },
+} as const;
+
+const conversionBody = {
+    type: 'object',
+    required: ['sku', 'orderId'],
+    additionalProperties: false,
+    properties: { sku: identifier, orderId: identifier },
+} as const;
+
 /**
  * A key that is present but empty is refused rather than ignored, for the same
  * reason an unknown body field is. The client asked for idempotency, and
@@ -132,9 +158,24 @@ const idempotencyHeaders = {
  * is the honest answer when stock ran out between reading a page and
  * submitting an order. 400 would blame the caller for something it could not
  * have known.
+ *
+ * Two hold answers are more specific. A hold the merchant never placed is
+ * 404, like an unknown SKU. A hold that ran out is 410, because it did exist
+ * and is now gone for good, and a checkout should react by offering to order
+ * directly rather than by retrying.
  */
-const statusForRejection = (rejection: Rejection): number =>
-    rejection.kind === 'invalid_quantity' ? 400 : 409;
+const statusForRejection = (rejection: Rejection): number => {
+    switch (rejection.kind) {
+        case 'invalid_quantity':
+            return 400;
+        case 'unknown_hold':
+            return 404;
+        case 'hold_expired':
+            return 410;
+        default:
+            return 409;
+    }
+};
 
 const idempotencyFrom = (
     merchantId: string,
@@ -389,12 +430,17 @@ export const createServer = async ({
         if (!inventory) {
             return response.status(404).send({ error: { kind: 'unknown_sku', sku } });
         }
-        const { stock, entries } = inventory;
+        const { stock, entries, now } = inventory;
+        // Holds are reported apart from orders, so a merchant can see how
+        // much stock is sitting in checkouts. Negative like reserved, since
+        // both are stock spoken for.
+        const held = activelyHeld(entries, now);
         return response.send({
             sku,
             physical: stock.physical,
-            reserved: netReservations(entries),
-            salable: salableQuantity(stock, entries, policy),
+            reserved: reservedForOrders(entries),
+            held: held === 0 ? 0 : -held,
+            salable: salableQuantity(stock, entries, policy, now),
         });
     });
 
@@ -455,6 +501,101 @@ export const createServer = async ({
             );
             const outcome = await store.cancelOrder(
                 { merchantId, sku, orderId, quantity },
+                idempotency
+            );
+            return send(response, outcome, 201);
+        }
+    );
+
+    /*
+     * Checkout holds.
+     *
+     * Every one of these accepts an idempotency key, the conversion above
+     * all. A shopper's payment succeeding and the response to the conversion
+     * being lost is exactly the case where a client retries, and the retry
+     * must not place a second order.
+     */
+    app.post<{ Body: { sku: string; holdId: string; quantity: number } }>(
+        '/holds',
+        { schema: { body: holdBody, headers: idempotencyHeaders } },
+        async (request, response) => {
+            const { sku, holdId, quantity } = request.body;
+            const { id: merchantId, holdLifetimeSeconds } = request.merchant;
+            const idempotency = idempotencyFrom(
+                merchantId,
+                request.headers['idempotency-key'] as string | undefined,
+                'hold',
+                { sku, holdId, quantity }
+            );
+            const outcome = await store.placeHold(
+                { merchantId, sku, holdId, quantity, lifetimeSeconds: holdLifetimeSeconds },
+                policy,
+                idempotency
+            );
+            return send(response, outcome, 201);
+        }
+    );
+
+    app.post<{ Params: { holdId: string }; Body: { sku: string } }>(
+        '/holds/:holdId/extensions',
+        { schema: { body: holdActionBody, headers: idempotencyHeaders } },
+        async (request, response) => {
+            const { holdId } = request.params;
+            const { sku } = request.body;
+            const { id: merchantId, holdLifetimeSeconds } = request.merchant;
+            const idempotency = idempotencyFrom(
+                merchantId,
+                request.headers['idempotency-key'] as string | undefined,
+                'extend',
+                { sku, holdId }
+            );
+            const outcome = await store.extendHold(
+                { merchantId, sku, holdId, lifetimeSeconds: holdLifetimeSeconds },
+                policy,
+                idempotency
+            );
+            return send(response, outcome, 201);
+        }
+    );
+
+    app.post<{ Params: { holdId: string }; Body: { sku: string; orderId: string } }>(
+        '/holds/:holdId/conversions',
+        { schema: { body: conversionBody, headers: idempotencyHeaders } },
+        async (request, response) => {
+            const { holdId } = request.params;
+            const { sku, orderId } = request.body;
+            const merchantId = request.merchant.id;
+            const idempotency = idempotencyFrom(
+                merchantId,
+                request.headers['idempotency-key'] as string | undefined,
+                'convert',
+                { sku, holdId, orderId }
+            );
+            const outcome = await store.convertHold(
+                { merchantId, sku, holdId, orderId },
+                policy,
+                idempotency
+            );
+            return send(response, outcome, 201);
+        }
+    );
+
+    app.post<{ Params: { holdId: string }; Body: { sku: string } }>(
+        '/holds/:holdId/releases',
+        { schema: { body: holdActionBody, headers: idempotencyHeaders } },
+        async (request, response) => {
+            const { holdId } = request.params;
+            const { sku } = request.body;
+            const merchantId = request.merchant.id;
+            const idempotency = idempotencyFrom(
+                merchantId,
+                request.headers['idempotency-key'] as string | undefined,
+                'release',
+                { sku, holdId }
+            );
+            const outcome = await store.releaseHold(
+                { merchantId, sku, holdId },
+                policy,
                 idempotency
             );
             return send(response, outcome, 201);

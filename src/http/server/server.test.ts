@@ -197,7 +197,7 @@ describe('reading inventory', () => {
         await place({ sku, orderId: 'o-1', quantity: 3 });
         const response = await get(`/inventory/${sku}`);
 
-        expect(response.json()).toEqual({ sku, physical: 10, reserved: -3, salable: 7 });
+        expect(response.json()).toEqual({ sku, physical: 10, reserved: -3, held: 0, salable: 7 });
     });
 });
 
@@ -208,7 +208,7 @@ describe('shipping and canceling', () => {
 
         expect(ship.statusCode).toBe(201);
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 7, reserved: 0, salable: 7 });
+        expect(inventory.json()).toEqual({ sku, physical: 7, reserved: 0, held: 0, salable: 7 });
     });
 
     it('cancels and returns the stock to the shelf', async () => {
@@ -216,7 +216,7 @@ describe('shipping and canceling', () => {
         await post('/orders/o-1/cancellations', { sku, quantity: 3 });
 
         const inventory = await get(`/inventory/${sku}`);
-        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, salable: 10 });
+        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: 0, salable: 10 });
     });
 
     it('refuses to ship more than the order has outstanding', async () => {
@@ -559,5 +559,132 @@ describe('rate limiting', () => {
         for (const raw of ['0', '-5', '1.5', 'lots', '60/min']) {
             expect(() => parseRateLimit(raw)).toThrow(/positive integer/);
         }
+    });
+});
+
+describe('checkout holds', () => {
+    const hold = (quantity = 3, holdId = 'h-1', key?: string) =>
+        post('/holds', { sku, holdId, quantity }, apiKey, key);
+
+    /** A hold placed long enough ago that it has already expired. */
+    const expiredHold = async (holdId = 'h-1', quantity = 3) => {
+        await owner.query(
+            `insert into reservations
+                 (merchant_id, sku, hold_id, quantity, reason, expires_at, created_at)
+             values ($1, $2, $3, $4, 'hold_placed',
+                     now() - interval '1 minute', now() - interval '16 minutes')`,
+            [merchantId, sku, holdId, -quantity]
+        );
+    };
+
+    it('sets stock aside and reports it apart from orders', async () => {
+        const response = await hold(3);
+        expect(response.statusCode).toBe(201);
+        expect(response.json()).toMatchObject({
+            entries: [{ holdId: 'h-1', quantity: -3, reason: 'hold_placed' }],
+        });
+
+        const inventory = await get(`/inventory/${sku}`);
+        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: -3, salable: 7 });
+    });
+
+    it("expires after the merchant's hold lifetime", async () => {
+        await owner.query('update merchants set hold_lifetime_seconds = 120 where id = $1', [
+            merchantId,
+        ]);
+        const response = await hold(1);
+        const [placed] = response.json().entries as { at: string; expiresAt: string }[];
+        expect(Date.parse(placed?.expiresAt ?? '') - Date.parse(placed?.at ?? '')).toBe(120_000);
+    });
+
+    it('converts into an order, which then shows as reserved', async () => {
+        await hold(3);
+        const response = await post('/holds/h-1/conversions', { sku, orderId: 'o-1' });
+        expect(response.statusCode).toBe(201);
+
+        const inventory = await get(`/inventory/${sku}`);
+        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: -3, held: 0, salable: 7 });
+    });
+
+    it('converts once, even when the client retries with the same key', async () => {
+        await hold(3);
+        const first = await post(
+            '/holds/h-1/conversions',
+            { sku, orderId: 'o-1' },
+            apiKey,
+            'pay-1'
+        );
+        const retry = await post(
+            '/holds/h-1/conversions',
+            { sku, orderId: 'o-1' },
+            apiKey,
+            'pay-1'
+        );
+
+        expect(first.headers['idempotency-replayed']).toBe('false');
+        expect(retry.headers['idempotency-replayed']).toBe('true');
+        expect(retry.json()).toEqual(first.json());
+        const inventory = await get(`/inventory/${sku}`);
+        expect(inventory.json()).toMatchObject({ reserved: -3 });
+    });
+
+    it('answers an expired hold with 410 and what is available instead', async () => {
+        await expiredHold('h-1', 3);
+        const response = await post('/holds/h-1/conversions', { sku, orderId: 'o-1' });
+        expect(response.statusCode).toBe(410);
+        expect(response.json()).toMatchObject({
+            error: { kind: 'hold_expired', holdId: 'h-1', available: 10 },
+        });
+    });
+
+    it('stops counting an expired hold before the cleanup job has run', async () => {
+        await expiredHold('h-1', 3);
+        const inventory = await get(`/inventory/${sku}`);
+        expect(inventory.json()).toEqual({ sku, physical: 10, reserved: 0, held: 0, salable: 10 });
+    });
+
+    it('answers a hold that was never placed with 404', async () => {
+        const response = await post('/holds/h-9/conversions', { sku, orderId: 'o-1' });
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({ error: { kind: 'unknown_hold', holdId: 'h-9' } });
+    });
+
+    it('refuses a reused hold id with a conflict', async () => {
+        await hold(1);
+        await post('/holds/h-1/releases', { sku });
+        const response = await hold(1);
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ error: { kind: 'hold_exists', holdId: 'h-1' } });
+    });
+
+    it('extends an active hold to a later expiry', async () => {
+        const placed = await hold(2);
+        const response = await post('/holds/h-1/extensions', { sku });
+        expect(response.statusCode).toBe(201);
+
+        const before = (placed.json().entries as { expiresAt: string }[])[0]?.expiresAt ?? '';
+        const renewed = response.json().entries as { reason: string; expiresAt?: string }[];
+        expect(renewed.map((entry) => entry.reason)).toEqual(['hold_renewed', 'hold_placed']);
+        expect(Date.parse(renewed[1]?.expiresAt ?? '')).toBeGreaterThan(Date.parse(before));
+    });
+
+    it('releases a hold early and returns the stock', async () => {
+        await hold(3);
+        const response = await post('/holds/h-1/releases', { sku });
+        expect(response.statusCode).toBe(201);
+
+        const inventory = await get(`/inventory/${sku}`);
+        expect(inventory.json()).toMatchObject({ held: 0, salable: 10 });
+    });
+
+    it('keeps one merchant from acting on another merchant hold', async () => {
+        await hold(3);
+        const response = await post('/holds/h-1/conversions', { sku, orderId: 'o-1' }, otherApiKey);
+        expect(response.statusCode).toBe(404);
+    });
+
+    it('refuses an unknown field rather than ignoring it', async () => {
+        const response = await post('/holds', { sku, holdId: 'h-1', quantity: 1, ttl: 99 });
+        expect(response.statusCode).toBe(400);
     });
 });

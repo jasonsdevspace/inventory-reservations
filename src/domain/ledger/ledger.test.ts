@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { commitLimit, netReservations, outstandingForOrder, salableQuantity } from './ledger.js';
-import type { LedgerEntry, OversellPolicy, Stock } from '../types.js';
+import type { OrderEntry, OrderReason, OversellPolicy, Stock } from '../types.js';
 
 const sku = 'WIDGET-1';
 const stock = (physical: number): Stock => ({ sku, physical });
-const entry = (orderId: string, quantity: number, reason: LedgerEntry['reason']): LedgerEntry => ({
+const entry = (orderId: string, quantity: number, reason: OrderReason): OrderEntry => ({
     sku,
     orderId,
     quantity,
     reason,
 });
 const strict: OversellPolicy = { kind: 'strict' };
+const now = new Date('2026-01-01T12:00:00Z');
 
 describe('netReservations', () => {
     it('is zero for an empty ledger', () => {
@@ -42,48 +43,48 @@ describe('salableQuantity', () => {
      */
     it('falls by the committed amount when an order is placed', () => {
         const entries = [entry('o-1', -3, 'order_placed')];
-        expect(salableQuantity(stock(10), entries, strict)).toBe(7);
+        expect(salableQuantity(stock(10), entries, strict, now)).toBe(7);
     });
 
     it('is unchanged by the shipment that follows', () => {
         const entries = [entry('o-1', -3, 'order_placed'), entry('o-1', 3, 'order_shipped')];
-        expect(salableQuantity(stock(7), entries, strict)).toBe(7);
+        expect(salableQuantity(stock(7), entries, strict, now)).toBe(7);
     });
 
     it('recovers when an order is cancelled, without touching physical stock', () => {
         const entries = [entry('o-1', -3, 'order_placed'), entry('o-1', 3, 'order_canceled')];
-        expect(salableQuantity(stock(10), entries, strict)).toBe(10);
+        expect(salableQuantity(stock(10), entries, strict, now)).toBe(10);
     });
 
     it('holds stock back under a threshold policy', () => {
         const policy: OversellPolicy = { kind: 'threshold', holdBack: 2 };
-        expect(salableQuantity(stock(10), [], policy)).toBe(8);
+        expect(salableQuantity(stock(10), [], policy, now)).toBe(8);
     });
 
     it('is not raised by a backorder policy, which changes what may be committed rather than what is on hand', () => {
         const policy: OversellPolicy = { kind: 'backorder', limit: 5 };
-        expect(salableQuantity(stock(10), [], policy)).toBe(10);
+        expect(salableQuantity(stock(10), [], policy, now)).toBe(10);
     });
 
     it('can go negative, which is how an oversell becomes visible rather than hidden', () => {
         const entries = [entry('o-1', -12, 'order_placed')];
-        expect(salableQuantity(stock(10), entries, strict)).toBe(-2);
+        expect(salableQuantity(stock(10), entries, strict, now)).toBe(-2);
     });
 });
 
 describe('commitLimit', () => {
     it('equals salable quantity under a strict policy', () => {
-        expect(commitLimit(stock(10), [], strict)).toBe(10);
+        expect(commitLimit(stock(10), [], strict, now)).toBe(10);
     });
 
     it('extends past salable quantity under a backorder policy', () => {
         const policy: OversellPolicy = { kind: 'backorder', limit: 5 };
-        expect(commitLimit(stock(10), [], policy)).toBe(15);
+        expect(commitLimit(stock(10), [], policy, now)).toBe(15);
     });
 
     it('respects the held back units under a threshold policy', () => {
         const policy: OversellPolicy = { kind: 'threshold', holdBack: 2 };
-        expect(commitLimit(stock(10), [], policy)).toBe(8);
+        expect(commitLimit(stock(10), [], policy, now)).toBe(8);
     });
 });
 

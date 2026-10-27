@@ -20,6 +20,7 @@ from the start.
 - A pure domain core with no database or framework code in it
 - Three concurrency strategies, including one that is wrong on purpose so the bug can be reproduced
 - Idempotent writes, so a retried request never places a second order
+- Checkout holds that expire on their own, so an abandoned cart never keeps stock off sale
 - Multi-tenant data, isolated by API key and backed by Postgres row level security
 - A distroless container, health and readiness probes, and structured logs that never contain keys
 
@@ -105,7 +106,7 @@ Responses are shown formatted below. Add `| jq` to a command if you have it inst
 
 `DEMO-COMMITTED` has ten on hand, but three are reserved for an order that has
 not shipped, so seven can be sold. Reservations are stored as negative entries, which is why
-`reserved` reads -3.
+`reserved` reads -3. `held` counts stock set aside in checkouts, covered in step 6.
 
 ```bash
 curl localhost:8080/inventory/DEMO-COMMITTED \
@@ -113,7 +114,7 @@ curl localhost:8080/inventory/DEMO-COMMITTED \
 ```
 
 ```json
-{ "sku": "DEMO-COMMITTED", "physical": 10, "reserved": -3, "salable": 7 }
+{ "sku": "DEMO-COMMITTED", "physical": 10, "reserved": -3, "held": 0, "salable": 7 }
 ```
 
 </details>
@@ -162,7 +163,7 @@ curl localhost:8080/inventory/DEMO-1 \
 ```
 
 ```json
-{ "sku": "DEMO-1", "physical": 3, "reserved": 0, "salable": 3 }
+{ "sku": "DEMO-1", "physical": 3, "reserved": 0, "held": 0, "salable": 3 }
 ```
 
 </details>
@@ -196,8 +197,44 @@ curl localhost:8080/inventory/DEMO-1 \
 ```
 
 ```json
-{ "sku": "DEMO-1", "physical": 11, "reserved": 0, "salable": 11 }
+{ "sku": "DEMO-1", "physical": 11, "reserved": 0, "held": 0, "salable": 11 }
 ```
+
+</details>
+
+<details>
+<summary><b>6. Hold stock at checkout</b>: a hold paid for in time always becomes an order</summary>
+
+Set the last unit of `DEMO-SCARCE` aside while a shopper pays. It stops being available straight
+away, and the hold expires on its own after 15 minutes if nobody pays.
+
+```bash
+curl localhost:8080/holds \
+  --header 'x-api-key: demo-key-acme' \
+  --header 'content-type: application/json' \
+  --data '{ "sku": "DEMO-SCARCE", "holdId": "cart-1", "quantity": 1 }'
+
+curl localhost:8080/inventory/DEMO-SCARCE \
+  --header 'x-api-key: demo-key-acme'
+```
+
+```json
+{ "sku": "DEMO-SCARCE", "physical": 1, "reserved": 0, "held": -1, "salable": 0 }
+```
+
+When the payment goes through, convert the hold into an order. This never fails for lack of
+stock, because the unit was already set aside. A hold that has expired is answered with a 410 and
+the quantity available instead.
+
+```bash
+curl localhost:8080/holds/cart-1/conversions \
+  --header 'x-api-key: demo-key-acme' \
+  --header 'content-type: application/json' \
+  --header 'idempotency-key: pay-cart-1' \
+  --data '{ "sku": "DEMO-SCARCE", "orderId": "order-3" }'
+```
+
+The unit now shows under `reserved` instead of `held`, and ships like any other order.
 
 </details>
 
@@ -209,6 +246,10 @@ curl localhost:8080/inventory/DEMO-1 \
 | `POST /orders`                   | Reserve stock for an order                      |
 | `POST /orders/:id/shipments`     | Ship some or all of an order                    |
 | `POST /orders/:id/cancellations` | Release some or all of an order                 |
+| `POST /holds`                    | Set stock aside for a checkout                  |
+| `POST /holds/:id/extensions`     | Give an active checkout more time               |
+| `POST /holds/:id/conversions`    | Turn a hold into an order                       |
+| `POST /holds/:id/releases`       | End a hold early, when a cart is abandoned      |
 | `GET /health`                    | Whether the process is alive                    |
 | `GET /ready`                     | Whether it can serve traffic, database included |
 
@@ -276,6 +317,27 @@ never leave one without the other.
 </details>
 
 <details>
+<summary><b>Checkout holds</b>: stock set aside for a few minutes, freed the moment it expires</summary>
+
+An order is a commitment, so it keeps its stock until it ships or is canceled. A checkout that has
+not finished is different, because the shopper may simply leave. Its stock is set aside by a hold,
+which runs out.
+
+- Each merchant sets how long its holds last, 15 minutes by default. An extension gives a full
+  lifetime again, up to one hour from when the hold was first placed.
+- Available stock skips a hold the moment it expires, so a cart left open never keeps stock off
+  sale, even before anything else has run.
+- A cleanup job, `npm run expire-holds`, then records the release in the ledger, so every hold's
+  history shows how it ended. It runs with the service's own restricted rights.
+- Expiry is decided by the database clock, read after any wait for a lock, so servers whose clocks
+  drift still agree on whether a hold has run out.
+
+The reasoning, and the options it rules out, are in
+[decision record 4](docs/decisions/0004-checkout-holds-and-expiry.md).
+
+</details>
+
+<details>
 <summary><b>Security</b>: tenant isolation enforced twice, minimal database rights</summary>
 
 - **The API key decides the merchant.** No request can name a different merchant. Keys are stored
@@ -310,6 +372,7 @@ Each module sits in its own folder with its tests and any files it reads.
 src/
 ├── domain/            business logic, no I/O
 │   ├── commands/      place, ship and cancel
+│   ├── holds/         checkout holds and their expiry
 │   ├── ledger/        quantities derived from the entries
 │   ├── types.ts       shared types
 │   └── index.ts       public entry point
@@ -319,6 +382,7 @@ src/
 │   └── main.ts        starts the service
 └── postgres/          everything that talks to the database
     ├── store/         runs commands under each concurrency strategy
+    ├── holds/         the job that records expired holds
     ├── idempotency/   stored responses, plus the cleanup job
     ├── pool/          connections, tenancy and timeouts
     ├── merchants/     API key lookup
@@ -336,24 +400,28 @@ development needs none of them.
 <details>
 <summary><b>All environment variables</b></summary>
 
-| Variable                | Used by   | Meaning                                   | Default         |
-| ----------------------- | --------- | ----------------------------------------- | --------------- |
-| `APP_DATABASE_URL`      | service   | connection as the restricted app role     | Compose service |
-| `PORT`                  | service   | port to listen on                         | `8080`          |
-| `CONCURRENCY_STRATEGY`  | service   | `none`, `row_lock` or `serializable`      | `row_lock`      |
-| `OVERSELL_POLICY`       | service   | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
-| `RATE_LIMIT_PER_MINUTE` | service   | requests each API key may make per minute | `600`           |
-| `DATABASE_URL`          | migration | connection as the owner                   | Compose service |
-| `APP_DB_PASSWORD`       | migration | password given to the app role            | development one |
-| `SEED_DEMO`             | migration | `true` loads the demo merchants and stock | unset           |
-| `IDEMPOTENCY_RETENTION` | cleanup   | how long to keep idempotency keys         | `24 hours`      |
+| Variable                | Used by            | Meaning                                   | Default         |
+| ----------------------- | ------------------ | ----------------------------------------- | --------------- |
+| `APP_DATABASE_URL`      | service, holds job | connection as the restricted app role     | Compose service |
+| `PORT`                  | service            | port to listen on                         | `8080`          |
+| `CONCURRENCY_STRATEGY`  | service, holds job | `none`, `row_lock` or `serializable`      | `row_lock`      |
+| `OVERSELL_POLICY`       | service            | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
+| `RATE_LIMIT_PER_MINUTE` | service            | requests each API key may make per minute | `600`           |
+| `DATABASE_URL`          | migration          | connection as the owner                   | Compose service |
+| `APP_DB_PASSWORD`       | migration          | password given to the app role            | development one |
+| `SEED_DEMO`             | migration          | `true` loads the demo merchants and stock | unset           |
+| `IDEMPOTENCY_RETENTION` | retention          | how long to keep idempotency keys         | `24 hours`      |
+| `HOLD_SWEEP_LOOKBACK`   | holds job          | how far back to look for expired holds    | `7 days`        |
 
 </details>
 
-Expired idempotency keys are removed by a separate job, meant to run on a schedule:
+Two maintenance jobs are meant to run on a schedule. One removes expired idempotency keys, and the
+other records the end of expired checkout holds. Each merchant's hold lifetime is the
+`hold_lifetime_seconds` column of the `merchants` table.
 
 ```bash
 npm run retention
+npm run expire-holds
 ```
 
 ## Background
