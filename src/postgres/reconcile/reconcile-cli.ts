@@ -8,10 +8,14 @@ import { reconcileAll } from './reconcile.js';
  *
  * Prints one JSON object per finding, so a scheduler or log pipeline can
  * read them without parsing prose, and a summary line after them. Exits 1
- * when anything was found, so a scheduled run can alert on the status alone.
- * Writes nothing, whatever it finds. Deciding the fix is left to a person,
- * for the reasons in decision record 5.
+ * when anything was found and 2 when the check could not finish, so a
+ * scheduled run can tell a wrong ledger from a broken job on the status
+ * alone. Writes nothing, whatever it finds. Deciding the fix is left to a
+ * person, for the reasons in decision record 5.
  */
+const FOUND_PROBLEMS = 1;
+const COULD_NOT_FINISH = 2;
+
 const pool = createAppPool({ max: 2 });
 
 try {
@@ -28,7 +32,12 @@ try {
             ? 'reconciliation found nothing wrong'
             : `reconciliation found ${findings.length} problems`
     );
-    process.exitCode = findings.length === 0 ? 0 : 1;
+    process.exitCode = findings.length === 0 ? 0 : FOUND_PROBLEMS;
+} catch (error) {
+    // Reported, not rethrown, because an uncaught error exits 1, which would
+    // read as findings to anything alerting on the status.
+    console.error('reconciliation could not finish', error);
+    process.exitCode = COULD_NOT_FINISH;
 } finally {
     await pool.end();
 }
