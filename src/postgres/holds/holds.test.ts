@@ -1,8 +1,9 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { HoldEntry, OversellPolicy } from '../../domain/types.js';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
-import { createStore, type Clock, type Strategy } from '../store/store.js';
-import { expireDueHolds } from './sweeper.js';
+import { type Clock, createStore, type Strategy } from '../store/store.js';
 import {
     prepareDatabase,
     prewarmPool,
@@ -12,7 +13,7 @@ import {
     seedMerchant,
     seedStock,
 } from '../testkit/testkit.js';
-import type { HoldEntry, OversellPolicy } from '../../domain/types.js';
+import { expireDueHolds } from './sweeper.js';
 
 /*
  * Checkout holds against a real Postgres.

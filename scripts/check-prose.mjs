@@ -16,7 +16,7 @@
  *
  * Run with `npm run prose`.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'coverage', 'dist']);
@@ -33,6 +33,14 @@ const EM_DASH = String.fromCodePoint(0x2014);
 
 const PROCESS_ARTIFACTS =
     /\b(TODO|FIXME|XXX|HACK|TBD)\b|coming soon|not implemented|waiting on|to be (decided|determined)|for now,? (leave|skip)/i;
+
+/**
+ * A comment that points at an issue or a pull request by number. The
+ * number means nothing once the tracker moves on, and the comment should
+ * have said what the issue said instead.
+ */
+const ISSUE_REFERENCES =
+    /\b(issue|issues|ticket|tickets|pr|prs|pull request)s? ?#?\d+\b|\(#\d+\)|\bGH-\d+\b/i;
 
 /**
  * British forms of words this codebase actually uses, listed rather than
@@ -103,6 +111,8 @@ for (const file of walk('.')) {
 
     for (const { index, text } of segments) {
         if (PROCESS_ARTIFACTS.test(text)) record(file, index, 'process artifact', text);
+        if (!isMarkdown && ISSUE_REFERENCES.test(text))
+            record(file, index, 'issue reference', text);
         if (/[A-Za-z];/.test(text)) record(file, index, 'semicolon in prose', text);
         if (BRITISH_SPELLINGS.test(text)) record(file, index, 'British spelling', text);
     }

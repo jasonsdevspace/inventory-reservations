@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
+
 import type {
     Connection,
     ConnectionPool,
@@ -42,7 +43,8 @@ const run = async <R>(db: PGlite, text: string, values?: unknown[]): Promise<Que
     const result = await db.query<R>(text, values);
     // PGlite reports affected rows for writes and rows for reads. The store
     // reads rowCount the way pg sets it, which is the count either way.
-    return { rows: result.rows, rowCount: result.affectedRows || result.rows.length };
+    const affected = result.affectedRows ?? 0;
+    return { rows: result.rows, rowCount: affected > 0 ? affected : result.rows.length };
 };
 
 export const createPglitePool = (db: PGlite, role?: string): ConnectionPool => {

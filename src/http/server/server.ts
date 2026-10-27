@@ -1,16 +1,17 @@
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
+
+import { activelyHeld, reservedForOrders, salableQuantity } from '../../domain/ledger/ledger.js';
+import type { OversellPolicy, Rejection } from '../../domain/types.js';
 import { hashRequest } from '../../postgres/idempotency/fingerprint.js';
 import type { IdempotencyContext } from '../../postgres/idempotency/idempotency.js';
 import {
     hashApiKey,
-    merchantForApiKey,
     type Merchant,
+    merchantForApiKey,
 } from '../../postgres/merchants/merchants.js';
 import { createStore, type Outcome, type Strategy } from '../../postgres/store/store.js';
-import { activelyHeld, reservedForOrders, salableQuantity } from '../../domain/ledger/ledger.js';
-import type { OversellPolicy, Rejection } from '../../domain/types.js';
 
 /**
  * HTTP in front of the store.
@@ -173,7 +174,11 @@ const statusForRejection = (rejection: Rejection): number => {
             return 404;
         case 'hold_expired':
             return 410;
-        default:
+        case 'insufficient_salable':
+        case 'exceeds_commitment':
+        case 'hold_exists':
+        case 'hold_ended':
+        case 'hold_at_limit':
             return 409;
     }
 };
@@ -320,7 +325,7 @@ export const createServer = async ({
      * all taking requests they cannot serve. This service can be alive and not
      * ready, and says so.
      */
-    app.get('/health', async () => ({ status: 'ok' }));
+    app.get('/health', () => ({ status: 'ok' }));
 
     app.get('/ready', async (_request, response) => {
         try {

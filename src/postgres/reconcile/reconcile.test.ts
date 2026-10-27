@@ -1,9 +1,10 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { OversellPolicy } from '../../domain/types.js';
+import { expireDueHolds } from '../holds/sweeper.js';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { createStore } from '../store/store.js';
-import { expireDueHolds } from '../holds/sweeper.js';
-import { reconcileAll } from './reconcile.js';
 import {
     prepareDatabase,
     prewarmPool,
@@ -12,7 +13,7 @@ import {
     seedMerchant,
     seedStock,
 } from '../testkit/testkit.js';
-import type { OversellPolicy } from '../../domain/types.js';
+import { reconcileAll } from './reconcile.js';
 
 /*
  * Reconciliation against a real Postgres.

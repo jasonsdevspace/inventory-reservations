@@ -66,7 +66,7 @@ export const recordResult = async (
 
 export interface ExistingKey {
     readonly requestHash: string;
-    readonly result: unknown | null;
+    readonly result: unknown;
 }
 
 /**
@@ -81,7 +81,7 @@ export const readKey = async (
     client: Queryable,
     context: IdempotencyContext
 ): Promise<ExistingKey | null> => {
-    const { rows } = await client.query<{ request_hash: string; result: unknown | null }>(
+    const { rows } = await client.query<{ request_hash: string; result: unknown }>(
         `select request_hash, result from idempotency_keys
          where merchant_id = $1 and key = $2 and endpoint = $3`,
         [context.merchantId, context.key, context.endpoint]

@@ -1,4 +1,5 @@
 import type pg from 'pg';
+
 import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js';
 import type { CommandResult, LedgerEntry, OversellPolicy } from '../../domain/types.js';
 import { createMerchant } from '../merchants/merchants.js';

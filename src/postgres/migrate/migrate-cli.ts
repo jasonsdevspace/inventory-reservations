@@ -1,6 +1,6 @@
 import { createOwnerPool } from '../pool/pool.js';
-import { migrate } from './migrate.js';
 import { seedDemoStock } from '../seed/seed.js';
+import { migrate } from './migrate.js';
 
 /**
  * The deployment step.

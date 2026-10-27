@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { hashRequest } from './fingerprint.js';
-import { purgeExpiredKeys } from './idempotency.js';
+
+import type { OversellPolicy } from '../../domain/types.js';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { createStore } from '../store/store.js';
 import {
@@ -12,7 +12,8 @@ import {
     seedMerchant,
     seedStock,
 } from '../testkit/testkit.js';
-import type { OversellPolicy } from '../../domain/types.js';
+import { hashRequest } from './fingerprint.js';
+import { purgeExpiredKeys } from './idempotency.js';
 
 const sku = 'WIDGET-1';
 const merchantId = 'test-merchant';

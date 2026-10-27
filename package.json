@@ -23,7 +23,8 @@
         "test": "vitest",
         "test:run": "vitest run",
         "test:coverage": "vitest run --coverage",
-        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run test:run"
+        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run test:run",
+        "prepare": "husky || true"
     },
     "license": "MIT",
     "devDependencies": {
@@ -32,7 +33,12 @@
         "@types/pg": "^8.23.1",
         "@vitest/coverage-v8": "^5.0.5",
         "eslint": "^10.13.0",
+        "eslint-plugin-import-x": "^4.17.1",
+        "eslint-plugin-simple-import-sort": "^14.0.0",
+        "eslint-plugin-sonarjs": "^4.2.2",
         "globals": "^17.13.0",
+        "husky": "^9.1.7",
+        "lint-staged": "^17.6.0",
         "prettier": "^3.9.10",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.72.0",
@@ -42,5 +48,14 @@
         "@fastify/rate-limit": "^11.2.1",
         "fastify": "^5.12.7",
         "pg": "^8.23.1"
+    },
+    "lint-staged": {
+        "*.{ts,tsx,js,mjs}": [
+            "eslint --fix",
+            "prettier --write"
+        ],
+        "*.{json,md,yml,yaml,css,html,sql}": [
+            "prettier --write"
+        ]
     }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { RACES } from './race-script.js';
 
 /*

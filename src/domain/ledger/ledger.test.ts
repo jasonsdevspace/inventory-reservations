@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { commitLimit, netReservations, outstandingForOrder, salableQuantity } from './ledger.js';
+
 import type { OrderEntry, OrderReason, OversellPolicy, Stock } from '../types.js';
+import { commitLimit, netReservations, outstandingForOrder, salableQuantity } from './ledger.js';
 
 const sku = 'WIDGET-1';
 const stock = (physical: number): Stock => ({ sku, physical });

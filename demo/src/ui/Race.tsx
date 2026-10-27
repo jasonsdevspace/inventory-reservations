@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { RACES, type Buyer, type BuyerState, type Strategy } from './race-script.js';
+
+import { type Buyer, type BuyerState, RACES, type Strategy } from './race-script.js';
 
 const REPO = 'https://github.com/jasonsdevspace/inventory-reservations';
 

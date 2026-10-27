@@ -1,8 +1,10 @@
 import { performance } from 'node:perf_hooks';
+
 import type pg from 'pg';
+
+import type { OversellPolicy } from '../../domain/types.js';
 import { createMerchant } from '../merchants/merchants.js';
 import { createStore, type Strategy } from '../store/store.js';
-import type { OversellPolicy } from '../../domain/types.js';
 
 /**
  * The contention benchmark.

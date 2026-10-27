@@ -51,6 +51,9 @@ jobs:
               with:
                   node-version: '24'
                   cache: 'npm'
+                  cache-dependency-path: |
+                      package-lock.json
+                      demo/package-lock.json
 
             # Service containers cannot run an init script, so the database
             # the suite uses is created here instead. Locally the same thing
@@ -60,6 +63,12 @@ jobs:
 
             - name: Install dependencies
               run: npm ci
+
+            # The lint reads types, and it covers the demo's files too, so
+            # the demo's own dependencies have to be present for it.
+            - name: Install the demo's dependencies
+              run: npm ci
+              working-directory: demo
 
             - name: Type-check
               run: npm run type-check

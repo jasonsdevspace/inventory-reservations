@@ -1,13 +1,14 @@
 import { PGlite } from '@electric-sql/pglite';
+
 import rolesSql from '../../../src/postgres/migrate/roles.sql?raw';
 import schemaSql from '../../../src/postgres/migrate/schema.sql?raw';
+import type { ConnectionPool } from '../../../src/postgres/pool/connection.js';
 import {
     DEMO_COMMITMENT,
     DEMO_MERCHANTS,
     DEMO_STOCK,
 } from '../../../src/postgres/seed/demo-data.js';
 import { createStore, type Store } from '../../../src/postgres/store/store.js';
-import type { ConnectionPool } from '../../../src/postgres/pool/connection.js';
 import { createPglitePool } from './pglite-pool.js';
 
 /** The role the service connects as, created by the project's own roles.sql. */

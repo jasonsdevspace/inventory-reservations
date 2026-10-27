@@ -1,10 +1,3 @@
-import {
-    releaseAfter,
-    rollBackAfter,
-    withTenant,
-    type Connection,
-    type ConnectionPool,
-} from '../pool/connection.js';
 import { cancelOrder, placeOrder, shipOrder } from '../../domain/commands/commands.js';
 import {
     convertHold,
@@ -22,11 +15,18 @@ import type {
 } from '../../domain/types.js';
 import {
     claimKey,
+    type IdempotencyContext,
     readKey,
     recordResult,
     UNIQUE_VIOLATION,
-    type IdempotencyContext,
 } from '../idempotency/idempotency.js';
+import {
+    type Connection,
+    type ConnectionPool,
+    releaseAfter,
+    rollBackAfter,
+    withTenant,
+} from '../pool/connection.js';
 
 /**
  * How the order boundary is protected.
@@ -365,10 +365,51 @@ type Attempt =
  */
 type Decide = (stock: Stock, entries: readonly LedgerEntry[], now: Date) => CommandResult;
 
+/** What every attempt runs with: where, how, and whose clock. */
+interface Runner {
+    readonly pool: ConnectionPool;
+    readonly strategy: Strategy;
+    readonly clock: Clock;
+    readonly onRetry?: () => void;
+}
+
+/**
+ * What a failed attempt means, from the error the database raised.
+ *
+ * Anything not recognized here is rethrown, since it is a fault and not one
+ * of the outcomes contention produces.
+ */
+const afterFailure = (
+    error: unknown,
+    claiming: boolean,
+    idempotency: IdempotencyContext | undefined
+): Attempt => {
+    // The key was already claimed, so this request duplicates one that has
+    // run or is still running.
+    if (idempotency && errorCode(error) === UNIQUE_VIOLATION) return { done: 'duplicate' };
+
+    // Another transaction won the race. Nothing was applied, so replaying
+    // the work is safe and the repeat sees the winner's effect.
+    if (isSerializationFailure(error)) return { done: false };
+
+    /*
+     * A lock wait ran past lock_timeout.
+     *
+     * During the claim, the same key is held by a request that is still
+     * running, which is exactly what in flight describes. Anywhere else it
+     * is a row contended past the point where waiting would help, the
+     * condition a spent serializable retry budget reports, and it gets
+     * the same answer.
+     */
+    if (errorCode(error) === LOCK_NOT_AVAILABLE) {
+        return { done: true, outcome: { kind: claiming ? 'in_flight' : 'contention' } };
+    }
+
+    throw error;
+};
+
 const runAttempt = async (
-    pool: ConnectionPool,
-    strategy: Strategy,
-    clock: Clock,
+    { pool, strategy, clock }: Runner,
     command: Target,
     decide: Decide,
     idempotency: IdempotencyContext | undefined
@@ -428,29 +469,7 @@ const runAttempt = async (
         return { done: true, outcome: { kind: 'applied', result } };
     } catch (error) {
         failure = await rollBackAfter(client, error);
-
-        // The key was already claimed, so this request duplicates one that has
-        // run or is still running.
-        if (idempotency && errorCode(error) === UNIQUE_VIOLATION) return { done: 'duplicate' };
-
-        // Another transaction won the race. Nothing was applied, so replaying
-        // the work is safe and the repeat sees the winner's effect.
-        if (isSerializationFailure(error)) return { done: false };
-
-        /*
-         * A lock wait ran past lock_timeout.
-         *
-         * During the claim, the same key is held by a request that is still
-         * running, which is exactly what in flight describes. Anywhere else it
-         * is a row contended past the point where waiting would help, the
-         * condition a spent serializable retry budget reports, and it gets
-         * the same answer.
-         */
-        if (errorCode(error) === LOCK_NOT_AVAILABLE) {
-            return { done: true, outcome: { kind: claiming ? 'in_flight' : 'contention' } };
-        }
-
-        throw error;
+        return afterFailure(error, claiming, idempotency);
     } finally {
         releaseAfter(client, failure);
     }
@@ -465,19 +484,19 @@ const runAttempt = async (
  * client mistake.
  */
 const runCommand = async (
-    pool: ConnectionPool,
-    strategy: Strategy,
-    { clock, onRetry }: Required<Pick<StoreOptions, 'clock'>> & Pick<StoreOptions, 'onRetry'>,
+    runner: Runner,
     command: Target,
     decide: Decide,
     idempotency?: IdempotencyContext
 ): Promise<Outcome> => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-        const result = await runAttempt(pool, strategy, clock, command, decide, idempotency);
-        if (result.done === 'duplicate' && idempotency) return resolveDuplicate(pool, idempotency);
+        const result = await runAttempt(runner, command, decide, idempotency);
+        if (result.done === 'duplicate' && idempotency) {
+            return resolveDuplicate(runner.pool, idempotency);
+        }
         if (result.done === true) return result.outcome;
         if (attempt < MAX_ATTEMPTS) {
-            onRetry?.();
+            runner.onRetry?.();
             await pause(backoffFor(attempt));
         }
     }
@@ -490,7 +509,7 @@ export const createStore = (
     strategy: Strategy,
     { clock = databaseClock, onRetry }: StoreOptions = {}
 ) => {
-    const options = { clock, ...(onRetry && { onRetry }) };
+    const runner: Runner = { pool, strategy, clock, ...(onRetry && { onRetry }) };
     // Checked here as well as at startup, because a cast anywhere else can still
     // hand the store a name it does not know, and the cost of not noticing is an
     // oversell rather than an error.
@@ -528,9 +547,7 @@ export const createStore = (
             idempotency?: IdempotencyContext
         ): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries, now) =>
                     placeOrder(
@@ -548,9 +565,7 @@ export const createStore = (
 
         shipOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries) =>
                     shipOrder({
@@ -564,9 +579,7 @@ export const createStore = (
 
         cancelOrder: (command: Command, idempotency?: IdempotencyContext): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries) =>
                     cancelOrder({
@@ -584,9 +597,7 @@ export const createStore = (
             idempotency?: IdempotencyContext
         ): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries, now) =>
                     placeHold(
@@ -609,9 +620,7 @@ export const createStore = (
             idempotency?: IdempotencyContext
         ): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries, now) =>
                     extendHold(
@@ -633,9 +642,7 @@ export const createStore = (
             idempotency?: IdempotencyContext
         ): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries, now) =>
                     convertHold(
@@ -651,9 +658,7 @@ export const createStore = (
             idempotency?: IdempotencyContext
         ): Promise<Outcome> =>
             runCommand(
-                pool,
-                strategy,
-                options,
+                runner,
                 command,
                 (stock, entries, now) =>
                     releaseHold({ stock, entries, now, holdId: command.holdId }, policy),
@@ -668,7 +673,7 @@ export const createStore = (
          * exactly one of them takes effect.
          */
         expireHolds: (target: Target): Promise<Outcome> =>
-            runCommand(pool, strategy, options, target, (stock, entries, now) =>
+            runCommand(runner, target, (stock, entries, now) =>
                 expireHolds({ stock, entries, now })
             ),
 

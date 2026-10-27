@@ -2,11 +2,13 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { cpus, platform, release } from 'node:os';
 import { dirname } from 'node:path';
+
 import pg from 'pg';
+
 import { migrate } from '../migrate/migrate.js';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { createBench, type OversellResult, type Scenario, type ScenarioResult } from './bench.js';
-import { renderReport, type BenchReport } from './report.js';
+import { type BenchReport, renderReport } from './report.js';
 
 /**
  * Runs the contention benchmark and writes its results.
@@ -78,19 +80,23 @@ try {
     );
     warm.forEach((client) => client.release());
 
+    /** The median of several measured runs, after an unmeasured warm-up. */
+    const measure = async (scenario: Scenario): Promise<ScenarioResult> => {
+        // A short unmeasured run first, so caches and plans are warm.
+        await bench.runScenario({ ...scenario, orders: Math.ceil(ORDERS / 10) });
+        const runs: ScenarioResult[] = [];
+        for (let run = 0; run < RUNS; run += 1) runs.push(await bench.runScenario(scenario));
+        runs.sort((a, b) => a.throughput - b.throughput);
+        const median = runs[Math.floor(RUNS / 2)] ?? runs[0];
+        if (!median) throw new Error('a scenario produced no runs');
+        return median;
+    };
+
     const scenarios: ScenarioResult[] = [];
     for (const shape of ['one_sku', 'own_sku'] as const) {
         for (const strategy of ['row_lock', 'serializable'] as const) {
             for (const concurrency of CONCURRENCY) {
-                const scenario: Scenario = { strategy, shape, concurrency, orders: ORDERS };
-                // A short unmeasured run first, so caches and plans are warm.
-                await bench.runScenario({ ...scenario, orders: Math.ceil(ORDERS / 10) });
-                const runs: ScenarioResult[] = [];
-                for (let run = 0; run < RUNS; run += 1)
-                    runs.push(await bench.runScenario(scenario));
-                runs.sort((a, b) => a.throughput - b.throughput);
-                const result = runs[Math.floor(RUNS / 2)] ?? runs[0];
-                if (!result) throw new Error('a scenario produced no runs');
+                const result = await measure({ strategy, shape, concurrency, orders: ORDERS });
                 scenarios.push(result);
                 console.log(
                     `${shape} ${strategy} x${concurrency}: ${result.throughput} orders/s, p99 ${result.latency.p99}ms, ${result.retries} retries`

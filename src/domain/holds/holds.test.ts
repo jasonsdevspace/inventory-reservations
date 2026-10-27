@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-    convertHold,
-    expireHolds,
-    extendHold,
-    MAX_HOLD_LIFETIME_SECONDS,
-    placeHold,
-    releaseHold,
-} from './holds.js';
+
 import { placeOrder, shipOrder } from '../commands/commands.js';
 import {
     activelyHeld,
@@ -16,6 +9,14 @@ import {
     salableQuantity,
 } from '../ledger/ledger.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../types.js';
+import {
+    convertHold,
+    expireHolds,
+    extendHold,
+    MAX_HOLD_LIFETIME_SECONDS,
+    placeHold,
+    releaseHold,
+} from './holds.js';
 
 const sku = 'WIDGET-1';
 const stock = (physical: number): Stock => ({ sku, physical });

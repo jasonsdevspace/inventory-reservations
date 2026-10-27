@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
+
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
 import { createAppPool, createOwnerPool } from '../../postgres/pool/pool.js';
 import {
     prepareDatabase,
@@ -444,7 +446,7 @@ describe('policy configuration', () => {
         ['backorder:5', { kind: 'backorder', limit: 5 }],
         [undefined, { kind: 'strict' }],
     ])('parses %s', (raw, expected) => {
-        expect(parsePolicy(raw as string | undefined)).toEqual(expected);
+        expect(parsePolicy(raw)).toEqual(expected);
     });
 
     it.each(['threshold', 'threshold:-1', 'threshold:1.5', 'nonsense:1'])(
