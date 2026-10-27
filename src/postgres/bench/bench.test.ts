@@ -1,9 +1,10 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { prepareDatabase, resetDatabase } from '../testkit/testkit.js';
 import { createBench, percentile } from './bench.js';
-import { renderReport, type BenchReport } from './report.js';
+import { type BenchReport, renderReport } from './report.js';
 
 /*
  * The benchmark is run by hand, so nothing else would notice it breaking.

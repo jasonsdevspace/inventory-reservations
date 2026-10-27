@@ -1,4 +1,5 @@
 import type pg from 'pg';
+
 import { createMerchant } from '../merchants/merchants.js';
 import { DEMO_COMMITMENT, DEMO_MERCHANTS, DEMO_STOCK } from './demo-data.js';
 

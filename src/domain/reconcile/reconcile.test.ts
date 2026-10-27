@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { reconcile, type ReconcileInput } from './reconcile.js';
+
 import type { HoldEntry, LedgerEntry, OrderEntry, OversellPolicy } from '../types.js';
+import { reconcile, type ReconcileInput } from './reconcile.js';
 
 const sku = 'WIDGET-1';
 const strict: OversellPolicy = { kind: 'strict' };

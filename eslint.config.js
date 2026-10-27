@@ -1,6 +1,48 @@
 import js from '@eslint/js';
+import importX from 'eslint-plugin-import-x';
+import simpleImportSort from 'eslint-plugin-simple-import-sort';
+import sonarjs from 'eslint-plugin-sonarjs';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+
+/*
+ * Three kinds of rule live here.
+ *
+ * Mechanical ones, such as import order, are fixed by `eslint --fix` and
+ * exist so a diff never carries reordering noise. Bug catchers, from
+ * typescript-eslint's type-aware set and SonarJS, flag code that is wrong
+ * rather than code that is unusual. Size budgets catch a function that has
+ * grown past what a reader can hold at once. Everything is an error, since
+ * a warning that does not fail the build is a rule nobody follows.
+ */
+
+/** Rules that fire on real mistakes and almost never on style. */
+const bugCatchers = {
+    'sonarjs/no-identical-conditions': 'error',
+    'sonarjs/no-identical-expressions': 'error',
+    'sonarjs/no-all-duplicated-branches': 'error',
+    'sonarjs/no-element-overwrite': 'error',
+    'sonarjs/no-ignored-return': 'error',
+    'sonarjs/no-use-of-empty-return-value': 'error',
+    'sonarjs/no-empty-collection': 'error',
+    'sonarjs/no-unused-collection': 'error',
+    'sonarjs/no-collection-size-mischeck': 'error',
+    'sonarjs/no-extra-arguments': 'error',
+    'sonarjs/no-gratuitous-expressions': 'error',
+    'sonarjs/no-redundant-jump': 'error',
+    eqeqeq: ['error', 'always'],
+    'no-param-reassign': 'error',
+    'array-callback-return': 'error',
+    'no-return-assign': 'error',
+};
+
+/** How large a function may grow before it should be split. */
+const sizeBudgets = {
+    complexity: ['error', 15],
+    'sonarjs/cognitive-complexity': ['error', 15],
+    'max-depth': ['error', 4],
+    'max-params': ['error', 4],
+};
 
 export default tseslint.config(
     { ignores: ['**/coverage', '**/node_modules', '**/dist'] },
@@ -11,6 +53,7 @@ export default tseslint.config(
             ecmaVersion: 2023,
             globals: globals.node,
         },
+        plugins: { 'simple-import-sort': simpleImportSort, 'import-x': importX, sonarjs },
         rules: {
             '@typescript-eslint/no-unused-vars': [
                 'error',
@@ -20,9 +63,50 @@ export default tseslint.config(
             // hoisting surprises. Matches the convention in the portfolio repo.
             'func-style': ['error', 'expression'],
             'prefer-arrow-callback': ['error', { allowNamedFunctions: false }],
-            // The domain core is meant to be exhaustive over its unions. A
-            // missing case should be a type error, not a silent fallthrough.
-            '@typescript-eslint/switch-exhaustiveness-check': 'off',
+            'simple-import-sort/imports': 'error',
+            'simple-import-sort/exports': 'error',
+            'import-x/first': 'error',
+            'import-x/newline-after-import': 'error',
+            'import-x/no-duplicates': ['error', { 'prefer-inline': true }],
+            ...bugCatchers,
+            ...sizeBudgets,
+        },
+    },
+    {
+        // Rules that need the types. The project service reads each file's
+        // own tsconfig, so the demo is checked against browser types and the
+        // service against Node's.
+        files: ['**/*.{ts,tsx}'],
+        extends: [...tseslint.configs.recommendedTypeChecked],
+        languageOptions: {
+            parserOptions: {
+                projectService: { allowDefaultProject: ['demo/vite.config.ts'] },
+                tsconfigRootDir: import.meta.dirname,
+            },
+        },
+        rules: {
+            '@typescript-eslint/no-floating-promises': 'error',
+            '@typescript-eslint/no-misused-promises': 'error',
+            '@typescript-eslint/await-thenable': 'error',
+            '@typescript-eslint/require-array-sort-compare': 'error',
+            '@typescript-eslint/prefer-nullish-coalescing': 'error',
+            '@typescript-eslint/prefer-optional-chain': 'error',
+            '@typescript-eslint/no-unnecessary-condition': 'error',
+            '@typescript-eslint/prefer-readonly': 'error',
+            // The domain core is meant to be exhaustive over its unions, and
+            // this is what makes a missing case fail the build.
+            '@typescript-eslint/switch-exhaustiveness-check': 'error',
+        },
+    },
+    {
+        // Tests read whatever a response or a row happens to contain.
+        files: ['**/*.test.{ts,tsx}'],
+        rules: {
+            '@typescript-eslint/no-unsafe-assignment': 'off',
+            '@typescript-eslint/no-unsafe-member-access': 'off',
+            '@typescript-eslint/no-unsafe-argument': 'off',
+            'max-params': 'off',
+            'sonarjs/cognitive-complexity': 'off',
         },
     },
     {

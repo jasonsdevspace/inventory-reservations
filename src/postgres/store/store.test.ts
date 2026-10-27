@@ -1,8 +1,9 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool } from '../pool/pool.js';
+
+import type { OversellPolicy } from '../../domain/types.js';
 import { hashRequest } from '../idempotency/fingerprint.js';
-import { createStore, parseStrategy, type Strategy } from './store.js';
+import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import {
     prepareDatabase,
     prewarmPool,
@@ -12,7 +13,7 @@ import {
     seedMerchant,
     seedStock,
 } from '../testkit/testkit.js';
-import type { OversellPolicy } from '../../domain/types.js';
+import { createStore, parseStrategy, type Strategy } from './store.js';
 
 /*
  * These talk to a real Postgres, started by `docker compose up -d`.
@@ -256,8 +257,6 @@ describe.each<Strategy>(['row_lock', 'serializable'])(
             expect(accepted).toHaveLength(1);
             expect(refused).toHaveLength(CONTENDERS - 1);
             refused.forEach((result) => {
-                expect(result.ok).toBe(false);
-                if (result.ok) return;
                 expect(result.rejection.kind).toBe('insufficient_salable');
             });
 

@@ -1,5 +1,5 @@
-import { purgeExpiredKeys } from './idempotency.js';
 import { createOwnerPool } from '../pool/pool.js';
+import { purgeExpiredKeys } from './idempotency.js';
 
 /**
  * Deletes idempotency keys past their retention window.

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+
 import { bootDemoDatabase, type DemoDatabase } from '../db/boot.js';
 import { Benchmark } from './Benchmark.js';
 import { Demo } from './Demo.js';

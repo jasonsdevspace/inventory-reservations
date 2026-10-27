@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+
+import { expireDueHolds } from '../../../src/postgres/holds/sweeper.js';
 import {
     assertBoundByRowLevelSecurity,
     reusableAfter,
     withTenant,
 } from '../../../src/postgres/pool/connection.js';
-import { expireDueHolds } from '../../../src/postgres/holds/sweeper.js';
 import { reconcileAll } from '../../../src/postgres/reconcile/reconcile.js';
 import type { Outcome } from '../../../src/postgres/store/store.js';
 import { bootDemoDatabase, type DemoDatabase } from './boot.js';

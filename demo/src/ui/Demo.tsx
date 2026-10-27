@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
 import {
     activelyHeld,
     holdStates,
@@ -82,7 +83,10 @@ const describe = (action: string, outcome: Outcome): Report => {
                 detail: result.rejection,
             };
         }
-        default:
+        case 'contention':
+        case 'in_flight':
+        case 'key_reused':
+        case 'unknown_sku':
             return { tone: 'refused', text: `${action}: ${outcome.kind}.`, detail: outcome };
     }
 };
