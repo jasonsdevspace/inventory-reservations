@@ -9,6 +9,7 @@ on:
             - 'demo/**'
             - 'src/domain/**'
             - 'src/postgres/**'
+            - 'docs/benchmarks/**'
             - '.github/workflows/demo.yml'
     workflow_dispatch:
 

@@ -34,8 +34,6 @@ export interface Report {
     readonly detail?: unknown;
 }
 
-const REPO = 'https://github.com/jasonsdevspace/inventory-reservations';
-
 /** Why the domain refused, in a sentence. The raw rejection stays one click away. */
 const because = (rejection: Rejection): string => {
     switch (rejection.kind) {
@@ -192,19 +190,13 @@ export const Demo = ({ demo }: { readonly demo: DemoDatabase }) => {
     };
 
     return (
-        <main className="demo">
-            <header className="intro">
-                <h1>inventory-reservations</h1>
-                <p className="lede">
-                    An inventory ledger that keeps two customers from buying the last unit.
-                    Everything below runs the service's own store code against Postgres{' '}
-                    {demo.postgresVersion}, running in this page, with the same schema, roles and
-                    row level security as a deployment.
-                </p>
-                <p className="links">
-                    <a href={REPO}>Source on GitHub</a>
-                    <a href={`${REPO}/tree/main/docs/decisions`}>Decision records</a>
-                    <a href={`${REPO}/blob/main/docs/benchmarks/results.md`}>Benchmark</a>
+        <section className="live" aria-label="Run the service">
+            <header className="live-intro">
+                <h2>Run the service</h2>
+                <p className="hint">
+                    This is the service's own store code, running against Postgres{' '}
+                    {demo.postgresVersion} in this page, with the same schema, roles and row level
+                    security as a deployment. Everything you do here is a real transaction.
                 </p>
             </header>
 
@@ -429,7 +421,7 @@ export const Demo = ({ demo }: { readonly demo: DemoDatabase }) => {
             )}
 
             <RulesPanel demo={demo} merchantId={merchantId} onChange={refresh} />
-        </main>
+        </section>
     );
 };
 
