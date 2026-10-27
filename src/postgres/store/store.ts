@@ -136,6 +136,14 @@ const databaseClock: Clock = async (client) => {
 
 export interface StoreOptions {
     readonly clock?: Clock;
+    /**
+     * Called each time a serializable attempt loses a conflict and is retried.
+     *
+     * Retries are the cost the serializable strategy pays instead of waiting,
+     * and they are invisible from outside the store without this. The
+     * benchmark counts them, and a service could feed them to its metrics.
+     */
+    readonly onRetry?: () => void;
 }
 
 /**
@@ -444,7 +452,7 @@ const runAttempt = async (
 const runCommand = async (
     pool: pg.Pool,
     strategy: Strategy,
-    clock: Clock,
+    { clock, onRetry }: Required<Pick<StoreOptions, 'clock'>> & Pick<StoreOptions, 'onRetry'>,
     command: Target,
     decide: Decide,
     idempotency?: IdempotencyContext
@@ -452,7 +460,10 @@ const runCommand = async (
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         const result = await runAttempt(pool, strategy, clock, command, decide, idempotency);
         if (result.done) return result.outcome;
-        if (attempt < MAX_ATTEMPTS) await pause(backoffFor(attempt));
+        if (attempt < MAX_ATTEMPTS) {
+            onRetry?.();
+            await pause(backoffFor(attempt));
+        }
     }
 
     return { kind: 'contention' };
@@ -461,8 +472,9 @@ const runCommand = async (
 export const createStore = (
     pool: pg.Pool,
     strategy: Strategy,
-    { clock = databaseClock }: StoreOptions = {}
+    { clock = databaseClock, onRetry }: StoreOptions = {}
 ) => {
+    const options = { clock, ...(onRetry && { onRetry }) };
     // Checked here as well as at startup, because a cast anywhere else can still
     // hand the store a name it does not know, and the cost of not noticing is an
     // oversell rather than an error.
@@ -502,7 +514,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries, now) =>
                     placeOrder(
@@ -522,7 +534,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries) =>
                     shipOrder({
@@ -538,7 +550,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries) =>
                     cancelOrder({
@@ -558,7 +570,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries, now) =>
                     placeHold(
@@ -583,7 +595,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries, now) =>
                     extendHold(
@@ -607,7 +619,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries, now) =>
                     convertHold(
@@ -625,7 +637,7 @@ export const createStore = (
             runCommand(
                 pool,
                 strategy,
-                clock,
+                options,
                 command,
                 (stock, entries, now) =>
                     releaseHold({ stock, entries, now, holdId: command.holdId }, policy),
@@ -640,7 +652,7 @@ export const createStore = (
          * exactly one of them takes effect.
          */
         expireHolds: (target: Target): Promise<Outcome> =>
-            runCommand(pool, strategy, clock, target, (stock, entries, now) =>
+            runCommand(pool, strategy, options, target, (stock, entries, now) =>
                 expireHolds({ stock, entries, now })
             ),
 
