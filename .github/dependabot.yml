@@ -14,6 +14,15 @@ updates:
           npm:
               update-types: [minor, patch]
 
+    # The browser demo has its own dependencies, pinned to exact versions.
+    - package-ecosystem: npm
+      directory: /demo
+      schedule:
+          interval: weekly
+      groups:
+          demo:
+              update-types: [minor, patch]
+
     - package-ecosystem: github-actions
       directory: /
       schedule:

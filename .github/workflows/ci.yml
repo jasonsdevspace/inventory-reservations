@@ -83,3 +83,33 @@ jobs:
               run: npm run build && node dist/postgres/migrate/migrate-cli.js
               env:
                   APP_DB_PASSWORD: reservations_app
+
+    # The browser demo runs the service's own store against Postgres in the
+    # page. Its tests check the claims the page makes to a visitor, and the
+    # build catches the store picking up anything a browser cannot load.
+    demo:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: demo
+        steps:
+            - name: Checkout
+              uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+              with:
+                  persist-credentials: false
+
+            - name: Setup Node
+              uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: '24'
+                  cache: 'npm'
+                  cache-dependency-path: demo/package-lock.json
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Test against Postgres in the page
+              run: npm test
+
+            - name: Type-check and build
+              run: npm run build

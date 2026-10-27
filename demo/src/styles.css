@@ -1,0 +1,406 @@
+:root {
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --text: #1d1d1b;
+    --muted: #5f5f5a;
+    --line: #e2e1dc;
+    --accent: #2f5bd3;
+    --reserved: #c9721c;
+    --held: #7a5bd6;
+    --free: #2f8a55;
+    --refused: #b3261e;
+    --refused-bg: #fbeceb;
+    --ok-bg: #e9f5ee;
+    --info-bg: #edf1fb;
+    --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #141413;
+        --surface: #1d1d1b;
+        --text: #ecebe6;
+        --muted: #a3a29b;
+        --line: #33332f;
+        --accent: #7b9cff;
+        --reserved: #e59a4e;
+        --held: #a98cf5;
+        --free: #5cc28a;
+        --refused: #ff8a80;
+        --refused-bg: #3a1f1d;
+        --ok-bg: #1b3326;
+        --info-bg: #1f2740;
+        color-scheme: dark;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font:
+        16px/1.5 system-ui,
+        -apple-system,
+        'Segoe UI',
+        sans-serif;
+}
+
+main {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 32px 16px 64px;
+}
+
+h1 {
+    font-size: 1.75rem;
+    margin: 0 0 8px;
+}
+
+h2 {
+    font-size: 1.15rem;
+    margin: 0 0 4px;
+}
+
+h3 {
+    font-size: 1rem;
+    margin: 0 0 4px;
+}
+
+a {
+    color: var(--accent);
+}
+
+pre,
+code {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+}
+
+pre {
+    margin: 8px 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+button {
+    font: inherit;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--accent);
+}
+
+button:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+button[aria-pressed='true'] {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.hint {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 12px;
+}
+
+.boot {
+    padding-top: 20vh;
+    text-align: center;
+}
+
+.lede {
+    max-width: 70ch;
+    margin: 0 0 8px;
+}
+
+.links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 0 0 24px;
+}
+
+.merchants {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.merchants .hint {
+    margin: 0 0 0 8px;
+}
+
+.products {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.product {
+    display: grid;
+    text-align: left;
+    padding: 14px;
+}
+
+.product .sku {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.product .available {
+    font-size: 1.75rem;
+    font-weight: 600;
+}
+
+.product .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.panel,
+.rules {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.breakdown .bar {
+    display: flex;
+    height: 12px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--line);
+    margin-bottom: 12px;
+}
+
+.bar .reserved {
+    background: var(--reserved);
+}
+
+.bar .held {
+    background: var(--held);
+}
+
+.bar .free {
+    background: var(--free);
+}
+
+.breakdown dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin: 0 0 16px;
+}
+
+.breakdown dt {
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.breakdown dd {
+    margin: 0;
+    font-size: 1.4rem;
+    font-weight: 600;
+}
+
+.breakdown .reserved dd {
+    color: var(--reserved);
+}
+
+.breakdown .held dd {
+    color: var(--held);
+}
+
+.breakdown .free dd {
+    color: var(--free);
+}
+
+.actions,
+.row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 8px;
+}
+
+.quantity {
+    display: grid;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.quantity input {
+    font: inherit;
+    width: 88px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--text);
+}
+
+.open {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0 0;
+    display: grid;
+    gap: 8px;
+}
+
+.open li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.open li span {
+    flex: 1 1 220px;
+}
+
+.reports {
+    list-style: none;
+    padding: 0;
+    margin: 16px 0;
+    display: grid;
+    gap: 8px;
+}
+
+.reports li,
+.answer {
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.reports p,
+.answer p {
+    margin: 0;
+}
+
+.ok {
+    background: var(--ok-bg);
+}
+
+.refused {
+    background: var(--refused-bg);
+}
+
+.refused p {
+    color: var(--refused);
+}
+
+.info {
+    background: var(--info-bg);
+}
+
+.reports li:not(:first-child) {
+    opacity: 0.7;
+}
+
+.ledger .table {
+    overflow-x: auto;
+}
+
+.ledger table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.ledger th,
+.ledger td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+
+.ledger th {
+    color: var(--muted);
+    font-weight: 500;
+}
+
+.ledger tbody tr:first-child {
+    animation: arrive 1.2s ease-out;
+}
+
+.ledger .minus {
+    color: var(--reserved);
+}
+
+.ledger .plus {
+    color: var(--free);
+}
+
+@keyframes arrive {
+    from {
+        background: var(--info-bg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ledger tbody tr:first-child {
+        animation: none;
+    }
+}
+
+.attempts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.attempts article {
+    display: grid;
+    align-content: start;
+    gap: 8px;
+}
+
+.attempts article p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.attempts article > button {
+    justify-self: start;
+}
+
+.answer.refused p,
+.answer.ok p,
+.answer.info p {
+    color: var(--text);
+}
+
+details summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 6px;
+}
