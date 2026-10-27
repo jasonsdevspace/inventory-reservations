@@ -13,6 +13,7 @@
         "migrate": "npm run build && node dist/postgres/migrate/migrate-cli.js",
         "retention": "npm run build && node dist/postgres/idempotency/retention-cli.js",
         "expire-holds": "npm run build && node dist/postgres/holds/expire-cli.js",
+        "bench": "npm run build && node dist/postgres/bench/bench-cli.js && prettier --write docs/benchmarks",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",

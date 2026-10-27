@@ -1,0 +1,398 @@
+{
+    "recordedAt": "2026-10-27T01:31:00.783Z",
+    "commit": "c25ca1f",
+    "environment": {
+        "postgres": "18.6",
+        "node": "v24.3.0",
+        "os": "darwin 25.6.0",
+        "cpu": "Apple M2 Max",
+        "cores": 12
+    },
+    "ordersPerScenario": 600,
+    "runsPerScenario": 3,
+    "scenarios": [
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 1,
+            "orders": 600,
+            "throughput": 502,
+            "latency": {
+                "p50": 1.96,
+                "p95": 2.42,
+                "p99": 3.16,
+                "max": 7.28
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 2,
+            "orders": 600,
+            "throughput": 744,
+            "latency": {
+                "p50": 2.65,
+                "p95": 3.58,
+                "p99": 6.02,
+                "max": 6.69
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 4,
+            "orders": 600,
+            "throughput": 737,
+            "latency": {
+                "p50": 5.59,
+                "p95": 6.67,
+                "p99": 9.74,
+                "max": 10.03
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 8,
+            "orders": 600,
+            "throughput": 716,
+            "latency": {
+                "p50": 10.9,
+                "p95": 14.65,
+                "p99": 17.55,
+                "max": 19.27
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 16,
+            "orders": 600,
+            "throughput": 721,
+            "latency": {
+                "p50": 22.06,
+                "p95": 28.06,
+                "p99": 28.62,
+                "max": 28.82
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "one_sku",
+            "concurrency": 32,
+            "orders": 600,
+            "throughput": 705,
+            "latency": {
+                "p50": 44.95,
+                "p95": 56.05,
+                "p99": 56.29,
+                "max": 56.38
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 1,
+            "orders": 600,
+            "throughput": 447,
+            "latency": {
+                "p50": 2.13,
+                "p95": 3.18,
+                "p99": 3.65,
+                "max": 5.12
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 2,
+            "orders": 600,
+            "throughput": 427,
+            "latency": {
+                "p50": 2.15,
+                "p95": 3.29,
+                "p99": 8.15,
+                "max": 543.25
+            },
+            "retries": 29,
+            "gaveUp": 2
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 4,
+            "orders": 600,
+            "throughput": 413,
+            "latency": {
+                "p50": 2.25,
+                "p95": 3.83,
+                "p99": 192.88,
+                "max": 597.28
+            },
+            "retries": 88,
+            "gaveUp": 4
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 8,
+            "orders": 600,
+            "throughput": 435,
+            "latency": {
+                "p50": 2.04,
+                "p95": 38.54,
+                "p99": 538.95,
+                "max": 679.48
+            },
+            "retries": 186,
+            "gaveUp": 9
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 16,
+            "orders": 600,
+            "throughput": 385,
+            "latency": {
+                "p50": 2.02,
+                "p95": 359.4,
+                "p99": 612.58,
+                "max": 735.98
+            },
+            "retries": 322,
+            "gaveUp": 19
+        },
+        {
+            "strategy": "serializable",
+            "shape": "one_sku",
+            "concurrency": 32,
+            "orders": 600,
+            "throughput": 321,
+            "latency": {
+                "p50": 2.62,
+                "p95": 503.64,
+                "p99": 583.85,
+                "max": 700.65
+            },
+            "retries": 814,
+            "gaveUp": 47
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 1,
+            "orders": 600,
+            "throughput": 473,
+            "latency": {
+                "p50": 1.97,
+                "p95": 3.09,
+                "p99": 3.54,
+                "max": 4.19
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 2,
+            "orders": 600,
+            "throughput": 1119,
+            "latency": {
+                "p50": 1.72,
+                "p95": 2.18,
+                "p99": 4.19,
+                "max": 4.67
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 4,
+            "orders": 600,
+            "throughput": 1987,
+            "latency": {
+                "p50": 1.99,
+                "p95": 2.35,
+                "p99": 2.52,
+                "max": 2.79
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 8,
+            "orders": 600,
+            "throughput": 3090,
+            "latency": {
+                "p50": 2.5,
+                "p95": 3.22,
+                "p99": 4.28,
+                "max": 4.65
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 16,
+            "orders": 600,
+            "throughput": 4075,
+            "latency": {
+                "p50": 3.82,
+                "p95": 4.66,
+                "p99": 6.22,
+                "max": 7.72
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "row_lock",
+            "shape": "own_sku",
+            "concurrency": 32,
+            "orders": 600,
+            "throughput": 5141,
+            "latency": {
+                "p50": 6.05,
+                "p95": 7.34,
+                "p99": 8.46,
+                "max": 9.58
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 1,
+            "orders": 600,
+            "throughput": 510,
+            "latency": {
+                "p50": 1.85,
+                "p95": 2.97,
+                "p99": 3.74,
+                "max": 4.82
+            },
+            "retries": 0,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 2,
+            "orders": 600,
+            "throughput": 691,
+            "latency": {
+                "p50": 1.66,
+                "p95": 9.07,
+                "p99": 22.42,
+                "max": 78.54
+            },
+            "retries": 81,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 4,
+            "orders": 600,
+            "throughput": 815,
+            "latency": {
+                "p50": 1.75,
+                "p95": 20.25,
+                "p99": 73.95,
+                "max": 167.86
+            },
+            "retries": 154,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 8,
+            "orders": 600,
+            "throughput": 722,
+            "latency": {
+                "p50": 1.82,
+                "p95": 36.29,
+                "p99": 132.11,
+                "max": 689.17
+            },
+            "retries": 229,
+            "gaveUp": 0
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 16,
+            "orders": 600,
+            "throughput": 761,
+            "latency": {
+                "p50": 2,
+                "p95": 88.58,
+                "p99": 297.28,
+                "max": 479.65
+            },
+            "retries": 439,
+            "gaveUp": 1
+        },
+        {
+            "strategy": "serializable",
+            "shape": "own_sku",
+            "concurrency": 32,
+            "orders": 600,
+            "throughput": 718,
+            "latency": {
+                "p50": 2.51,
+                "p95": 204.86,
+                "p99": 500.22,
+                "max": 657.83
+            },
+            "retries": 698,
+            "gaveUp": 4
+        }
+    ],
+    "oversell": [
+        {
+            "strategy": "none",
+            "buyers": 12,
+            "trials": 25,
+            "fewestAccepted": 11,
+            "mostAccepted": 12
+        },
+        {
+            "strategy": "row_lock",
+            "buyers": 12,
+            "trials": 25,
+            "fewestAccepted": 1,
+            "mostAccepted": 1
+        },
+        {
+            "strategy": "serializable",
+            "buyers": 12,
+            "trials": 25,
+            "fewestAccepted": 1,
+            "mostAccepted": 1
+        }
+    ]
+}
