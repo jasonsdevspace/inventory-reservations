@@ -2,7 +2,7 @@ import { commitLimit, outstandingForOrder } from '../ledger/ledger.js';
 import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../types.js';
 
 /**
- * The three things that can happen to a reservation.
+ * The three things that can happen to an order.
  *
  * Each returns the entries to append and the change to physical stock, and
  * writes nothing itself. Keeping the decision separate from the write is what
@@ -24,22 +24,27 @@ interface CommandInput {
 }
 
 /** Quantities are whole units and always positive. Direction is the command's job. */
-const invalidQuantity = (quantity: number): boolean => !Number.isInteger(quantity) || quantity <= 0;
+export const invalidQuantity = (quantity: number): boolean =>
+    !Number.isInteger(quantity) || quantity <= 0;
 
 /**
  * Commit stock to an order.
  *
  * Appends a negative entry and leaves physical stock alone, because the goods
  * have not moved. Refused when the request exceeds what the policy allows to
- * be committed.
+ * be committed. Needs the time, because holds count against what is available
+ * until the moment they expire.
  */
-export const placeOrder = (input: CommandInput, policy: OversellPolicy): CommandResult => {
-    const { stock, entries, orderId, quantity } = input;
+export const placeOrder = (
+    input: CommandInput & { readonly now: Date },
+    policy: OversellPolicy
+): CommandResult => {
+    const { stock, entries, orderId, quantity, now } = input;
     if (invalidQuantity(quantity)) {
         return { ok: false, rejection: { kind: 'invalid_quantity', quantity } };
     }
 
-    const available = commitLimit(stock, entries, policy);
+    const available = commitLimit(stock, entries, policy, now);
     if (quantity > available) {
         return {
             ok: false,

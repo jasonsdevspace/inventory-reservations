@@ -13,6 +13,8 @@ import type pg from 'pg';
 export interface Merchant {
     readonly id: string;
     readonly name: string;
+    /** How long this merchant's checkout holds last before they expire. */
+    readonly holdLifetimeSeconds: number;
 }
 
 /**
@@ -38,8 +40,14 @@ export const merchantForApiKey = async (
     pool: pg.Pool,
     apiKey: string
 ): Promise<Merchant | null> => {
-    const { rows } = await pool.query<{ id: string; name: string; api_key_hash: string }>(
-        'select id, name, api_key_hash from merchants where api_key_hash = $1',
+    const { rows } = await pool.query<{
+        id: string;
+        name: string;
+        api_key_hash: string;
+        hold_lifetime_seconds: number;
+    }>(
+        `select id, name, api_key_hash, hold_lifetime_seconds from merchants
+         where api_key_hash = $1`,
         [hashApiKey(apiKey)]
     );
     const row = rows[0];
@@ -51,16 +59,28 @@ export const merchantForApiKey = async (
     const stored = Buffer.from(row.api_key_hash);
     if (presented.length !== stored.length || !timingSafeEqual(presented, stored)) return null;
 
-    return { id: row.id, name: row.name };
+    return { id: row.id, name: row.name, holdLifetimeSeconds: row.hold_lifetime_seconds };
 };
+
+/** The hold lifetime a merchant gets unless it chooses another. */
+export const DEFAULT_HOLD_LIFETIME_SECONDS = 15 * 60;
 
 export const createMerchant = async (
     pool: pg.Pool,
-    merchant: Merchant & { apiKey: string }
+    merchant: Omit<Merchant, 'holdLifetimeSeconds'> & {
+        apiKey: string;
+        holdLifetimeSeconds?: number;
+    }
 ): Promise<void> => {
     await pool.query(
-        `insert into merchants (id, name, api_key_hash) values ($1, $2, $3)
+        `insert into merchants (id, name, api_key_hash, hold_lifetime_seconds)
+         values ($1, $2, $3, $4)
          on conflict (id) do nothing`,
-        [merchant.id, merchant.name, hashApiKey(merchant.apiKey)]
+        [
+            merchant.id,
+            merchant.name,
+            hashApiKey(merchant.apiKey),
+            merchant.holdLifetimeSeconds ?? DEFAULT_HOLD_LIFETIME_SECONDS,
+        ]
     );
 };

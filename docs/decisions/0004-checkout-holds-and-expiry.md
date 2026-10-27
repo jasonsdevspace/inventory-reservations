@@ -1,6 +1,6 @@
 # 4. Checkout holds, and how they expire
 
-**Status:** proposed
+**Status:** accepted
 
 ## Context
 
@@ -101,8 +101,14 @@ exactly.
   works out what a hold still has set aside from the ledger, inside that lock. A hold that was
   converted a moment earlier has nothing left to release. The unique index on final entries backs
   this up if the lock is ever bypassed.
-- **It works in batches.** A partial index on unresolved `hold_placed` entries keeps each run
-  proportional to the holds that need releasing, not to the whole history.
+- **It looks back over a bounded window.** In an append-only ledger a hold ends with a later row,
+  not a changed one, so no index can contain only the unfinished holds, and a scan of every
+  placement would grow with every hold ever placed. The job checks placements that expired within
+  the last seven days, which is far longer than any missed run. A hold left unfinished past that
+  window still blocks nothing, because reads skip it, and it is what reconciliation exists to
+  report.
+- **A busy SKU waits for the next run.** If contention on one SKU outlasts the retries, the job
+  moves on and reports it as deferred, so one product cannot hold up every other merchant.
 
 ## Consequences
 

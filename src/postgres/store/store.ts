@@ -1,7 +1,20 @@
 import type pg from 'pg';
 import { releaseAfter, rollBackAfter, withTenant } from '../pool/pool.js';
 import { cancelOrder, placeOrder, shipOrder } from '../../domain/commands/commands.js';
-import type { CommandResult, LedgerEntry, OversellPolicy, Stock } from '../../domain/types.js';
+import {
+    convertHold,
+    expireHolds,
+    extendHold,
+    placeHold,
+    releaseHold,
+} from '../../domain/holds/holds.js';
+import type {
+    CommandResult,
+    EntryReason,
+    LedgerEntry,
+    OversellPolicy,
+    Stock,
+} from '../../domain/types.js';
 import {
     claimKey,
     readKey,
@@ -77,7 +90,8 @@ const backoffFor = (attempt: number): number => {
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-interface Command {
+/** Where a command applies. The ledger is read and locked one SKU at a time. */
+interface Target {
     /**
      * Whose inventory this is.
      *
@@ -89,8 +103,39 @@ interface Command {
      */
     readonly merchantId: string;
     readonly sku: string;
+}
+
+interface Command extends Target {
     readonly orderId: string;
     readonly quantity: number;
+}
+
+interface HoldCommand extends Target {
+    readonly holdId: string;
+}
+
+/**
+ * Reads the current time inside a transaction.
+ *
+ * The database clock by default, so every instance of the service agrees on
+ * whether a hold has expired however far their own clocks drift.
+ * `clock_timestamp()` rather than `now()`, because `now()` is when the
+ * transaction began, and under the row lock strategy a conversion can wait in
+ * line for the lock while its hold runs out. The clock is read after that
+ * wait. Replaceable so a test can stop time, or move it on while a
+ * transaction waits.
+ */
+export type Clock = (client: pg.PoolClient) => Promise<Date>;
+
+const databaseClock: Clock = async (client) => {
+    const { rows } = await client.query<{ now: Date }>('select clock_timestamp() as now');
+    const row = rows[0];
+    if (!row) throw new Error('the database returned no time');
+    return row.now;
+};
+
+export interface StoreOptions {
+    readonly clock?: Clock;
 }
 
 /**
@@ -145,39 +190,87 @@ const readStock = async (
     return row ? { sku: row.sku, physical: row.physical } : undefined;
 };
 
+interface EntryRow {
+    sku: string;
+    order_id: string | null;
+    hold_id: string | null;
+    quantity: number;
+    reason: EntryReason;
+    expires_at: Date | null;
+    created_at: Date;
+}
+
+/** The columns a ledger entry is read from, shared with the test helpers. */
+export const ENTRY_COLUMNS = 'sku, order_id, hold_id, quantity, reason, expires_at, created_at';
+
+/**
+ * Turns a row back into the entry it was written from.
+ *
+ * The schema guarantees which identifiers each kind of entry carries, so a
+ * row with a `hold_id` is a hold entry and one without is an order entry.
+ */
+export const entryFromRow = (row: EntryRow): LedgerEntry => {
+    if (row.hold_id === null) {
+        return {
+            sku: row.sku,
+            orderId: row.order_id ?? '',
+            quantity: row.quantity,
+            reason: row.reason as Exclude<EntryReason, `hold_${string}`>,
+        };
+    }
+    return {
+        sku: row.sku,
+        holdId: row.hold_id,
+        quantity: row.quantity,
+        reason: row.reason as Extract<EntryReason, `hold_${string}`>,
+        at: row.created_at,
+        ...(row.expires_at && { expiresAt: row.expires_at }),
+        ...(row.order_id !== null && { orderId: row.order_id }),
+    };
+};
+
 const readEntries = async (
     client: pg.PoolClient,
     merchantId: string,
     sku: string
 ): Promise<LedgerEntry[]> => {
-    const { rows } = await client.query<{
-        sku: string;
-        order_id: string;
-        quantity: number;
-        reason: LedgerEntry['reason'];
-    }>(
-        `select sku, order_id, quantity, reason from reservations
+    const { rows } = await client.query<EntryRow>(
+        `select ${ENTRY_COLUMNS} from reservations
          where merchant_id = $1 and sku = $2 order by id`,
         [merchantId, sku]
     );
-    return rows.map((row) => ({
-        sku: row.sku,
-        orderId: row.order_id,
-        quantity: row.quantity,
-        reason: row.reason,
-    }));
+    return rows.map(entryFromRow);
 };
 
+/**
+ * Appends entries in the order given.
+ *
+ * A hold entry is stamped with the time the command was decided at, read from
+ * the database clock, rather than with the column default. The default is the
+ * start of the transaction, which under a lock wait is earlier than the time
+ * the decision used, and a hold's start is what caps how long it can last.
+ */
 const appendEntries = async (
     client: pg.PoolClient,
     merchantId: string,
     entries: readonly LedgerEntry[]
 ): Promise<void> => {
     for (const entry of entries) {
+        const hold = 'holdId' in entry ? entry : undefined;
         await client.query(
-            `insert into reservations (merchant_id, sku, order_id, quantity, reason)
-             values ($1, $2, $3, $4, $5)`,
-            [merchantId, entry.sku, entry.orderId, entry.quantity, entry.reason]
+            `insert into reservations
+                 (merchant_id, sku, order_id, hold_id, quantity, reason, expires_at, created_at)
+             values ($1, $2, $3, $4, $5, $6, $7, coalesce($8, now()))`,
+            [
+                merchantId,
+                entry.sku,
+                entry.orderId ?? null,
+                hold?.holdId ?? null,
+                entry.quantity,
+                entry.reason,
+                hold?.expiresAt ?? null,
+                hold?.at ?? null,
+            ]
         );
     }
 };
@@ -242,11 +335,17 @@ const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Pro
  */
 type Attempt = { readonly done: true; readonly outcome: Outcome } | { readonly done: false };
 
+/**
+ * A decision, given a consistent view of one SKU and the time it is made at.
+ */
+type Decide = (stock: Stock, entries: readonly LedgerEntry[], now: Date) => CommandResult;
+
 const runAttempt = async (
     pool: pg.Pool,
     strategy: Strategy,
-    command: Command,
-    decide: (stock: Stock, entries: readonly LedgerEntry[]) => CommandResult,
+    clock: Clock,
+    command: Target,
+    decide: Decide,
     idempotency: IdempotencyContext | undefined
 ): Promise<Attempt> => {
     const client = await pool.connect();
@@ -285,7 +384,9 @@ const runAttempt = async (
             return { done: true, outcome: { kind: 'unknown_sku', sku: command.sku } };
         }
         const entries = await readEntries(client, command.merchantId, command.sku);
-        const result = decide(stock, entries);
+        // After the lock, never before it. See Clock.
+        const now = await clock(client);
+        const result = decide(stock, entries, now);
 
         if (result.ok) {
             await appendEntries(client, command.merchantId, result.entries);
@@ -343,12 +444,13 @@ const runAttempt = async (
 const runCommand = async (
     pool: pg.Pool,
     strategy: Strategy,
-    command: Command,
-    decide: (stock: Stock, entries: readonly LedgerEntry[]) => CommandResult,
+    clock: Clock,
+    command: Target,
+    decide: Decide,
     idempotency?: IdempotencyContext
 ): Promise<Outcome> => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-        const result = await runAttempt(pool, strategy, command, decide, idempotency);
+        const result = await runAttempt(pool, strategy, clock, command, decide, idempotency);
         if (result.done) return result.outcome;
         if (attempt < MAX_ATTEMPTS) await pause(backoffFor(attempt));
     }
@@ -356,7 +458,11 @@ const runCommand = async (
     return { kind: 'contention' };
 };
 
-export const createStore = (pool: pg.Pool, strategy: Strategy) => {
+export const createStore = (
+    pool: pg.Pool,
+    strategy: Strategy,
+    { clock = databaseClock }: StoreOptions = {}
+) => {
     // Checked here as well as at startup, because a cast anywhere else can still
     // hand the store a name it does not know, and the cost of not noticing is an
     // oversell rather than an error.
@@ -367,7 +473,8 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
         strategy,
 
         /**
-         * One SKU's stock and ledger, for a caller reporting on them.
+         * One SKU's stock and ledger, for a caller reporting on them, with
+         * the time they were read at so expired holds can be told apart.
          *
          * Repeatable read, so both statements see the same snapshot. Under
          * read committed each takes its own, and a shipment committing between
@@ -381,7 +488,8 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
                 async (client) => {
                     const stock = await readStock(client, merchantId, sku, false);
                     if (!stock) return undefined;
-                    return { stock, entries: await readEntries(client, merchantId, sku) };
+                    const entries = await readEntries(client, merchantId, sku);
+                    return { stock, entries, now: await clock(client) };
                 },
                 'repeatable read'
             ),
@@ -394,10 +502,17 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
             runCommand(
                 pool,
                 strategy,
+                clock,
                 command,
-                (stock, entries) =>
+                (stock, entries, now) =>
                     placeOrder(
-                        { stock, entries, orderId: command.orderId, quantity: command.quantity },
+                        {
+                            stock,
+                            entries,
+                            orderId: command.orderId,
+                            quantity: command.quantity,
+                            now,
+                        },
                         policy
                     ),
                 idempotency
@@ -407,6 +522,7 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
             runCommand(
                 pool,
                 strategy,
+                clock,
                 command,
                 (stock, entries) =>
                     shipOrder({
@@ -422,6 +538,7 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
             runCommand(
                 pool,
                 strategy,
+                clock,
                 command,
                 (stock, entries) =>
                     cancelOrder({
@@ -432,6 +549,131 @@ export const createStore = (pool: pg.Pool, strategy: Strategy) => {
                     }),
                 idempotency
             ),
+
+        placeHold: (
+            command: HoldCommand & { readonly quantity: number; readonly lifetimeSeconds: number },
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                clock,
+                command,
+                (stock, entries, now) =>
+                    placeHold(
+                        {
+                            stock,
+                            entries,
+                            now,
+                            holdId: command.holdId,
+                            quantity: command.quantity,
+                            lifetimeSeconds: command.lifetimeSeconds,
+                        },
+                        policy
+                    ),
+                idempotency
+            ),
+
+        extendHold: (
+            command: HoldCommand & { readonly lifetimeSeconds: number },
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                clock,
+                command,
+                (stock, entries, now) =>
+                    extendHold(
+                        {
+                            stock,
+                            entries,
+                            now,
+                            holdId: command.holdId,
+                            lifetimeSeconds: command.lifetimeSeconds,
+                        },
+                        policy
+                    ),
+                idempotency
+            ),
+
+        convertHold: (
+            command: HoldCommand & { readonly orderId: string },
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                clock,
+                command,
+                (stock, entries, now) =>
+                    convertHold(
+                        { stock, entries, now, holdId: command.holdId, orderId: command.orderId },
+                        policy
+                    ),
+                idempotency
+            ),
+
+        releaseHold: (
+            command: HoldCommand,
+            policy: OversellPolicy,
+            idempotency?: IdempotencyContext
+        ): Promise<Outcome> =>
+            runCommand(
+                pool,
+                strategy,
+                clock,
+                command,
+                (stock, entries, now) =>
+                    releaseHold({ stock, entries, now, holdId: command.holdId }, policy),
+                idempotency
+            ),
+
+        /**
+         * Records the end of every expired hold on one SKU.
+         *
+         * Through the same path as every other command, lock and retries
+         * included, so it can run alongside a conversion of the same hold and
+         * exactly one of them takes effect.
+         */
+        expireHolds: (target: Target): Promise<Outcome> =>
+            runCommand(pool, strategy, clock, target, (stock, entries, now) =>
+                expireHolds({ stock, entries, now })
+            ),
+
+        /**
+         * SKUs with a hold placement that has expired without being closed.
+         *
+         * Looks back over a bounded window rather than the whole history. In
+         * an append-only ledger a hold ends with a later row rather than a
+         * changed one, so no index can hold only the unfinished placements,
+         * and an unbounded scan would grow with every hold ever placed. A hold
+         * left unfinished beyond the window changes nothing that can be sold,
+         * because reads already skip it, and it is what reconciliation exists
+         * to report.
+         */
+        skusWithExpiredHolds: (merchantId: string, lookback: string, limit: number) =>
+            withTenant(pool, merchantId, async (client) => {
+                const { rows } = await client.query<{ sku: string }>(
+                    `select distinct placed.sku from reservations placed
+                     where placed.merchant_id = $1
+                       and placed.reason = 'hold_placed'
+                       and placed.expires_at <= clock_timestamp()
+                       and placed.expires_at > clock_timestamp() - $2::interval
+                       and not exists (
+                           select 1 from reservations later
+                           where later.merchant_id = placed.merchant_id
+                             and later.hold_id = placed.hold_id
+                             and later.id > placed.id
+                       )
+                     limit $3`,
+                    [merchantId, lookback, limit]
+                );
+                return rows.map((row) => row.sku);
+            }),
     };
 };
 

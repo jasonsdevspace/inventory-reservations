@@ -6,6 +6,7 @@ import type { LedgerEntry, OversellPolicy, Stock } from '../types.js';
 const sku = 'WIDGET-1';
 const stock = (physical: number): Stock => ({ sku, physical });
 const strict: OversellPolicy = { kind: 'strict' };
+const now = new Date('2026-01-01T12:00:00Z');
 
 /** Appends whatever a successful command produced, the way a caller would. */
 const apply = (
@@ -16,7 +17,7 @@ const apply = (
 describe('placeOrder', () => {
     it('commits stock without moving it', () => {
         const result = placeOrder(
-            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 3 },
+            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 3, now },
             strict
         );
         expect(result.ok).toBe(true);
@@ -29,7 +30,7 @@ describe('placeOrder', () => {
 
     it('refuses more than is salable, and says what was available', () => {
         const result = placeOrder(
-            { stock: stock(2), entries: [], orderId: 'o-1', quantity: 3 },
+            { stock: stock(2), entries: [], orderId: 'o-1', quantity: 3, now },
             strict
         );
         expect(result).toEqual({
@@ -43,7 +44,7 @@ describe('placeOrder', () => {
             { sku, orderId: 'o-1', quantity: -8, reason: 'order_placed' },
         ];
         const result = placeOrder(
-            { stock: stock(10), entries, orderId: 'o-2', quantity: 3 },
+            { stock: stock(10), entries, orderId: 'o-2', quantity: 3, now },
             strict
         );
         expect(result).toEqual({
@@ -55,7 +56,7 @@ describe('placeOrder', () => {
     it('allows a backorder policy to commit past salable', () => {
         const policy: OversellPolicy = { kind: 'backorder', limit: 5 };
         const result = placeOrder(
-            { stock: stock(2), entries: [], orderId: 'o-1', quantity: 6 },
+            { stock: stock(2), entries: [], orderId: 'o-1', quantity: 6, now },
             policy
         );
         expect(result.ok).toBe(true);
@@ -64,7 +65,7 @@ describe('placeOrder', () => {
     it('refuses a threshold policy the units it holds back', () => {
         const policy: OversellPolicy = { kind: 'threshold', holdBack: 2 };
         const result = placeOrder(
-            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 9 },
+            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 9, now },
             policy
         );
         expect(result).toEqual({
@@ -75,7 +76,7 @@ describe('placeOrder', () => {
 
     it.each([0, -1, 1.5, Number.NaN])('refuses a quantity of %s', (quantity) => {
         const result = placeOrder(
-            { stock: stock(10), entries: [], orderId: 'o-1', quantity },
+            { stock: stock(10), entries: [], orderId: 'o-1', quantity, now },
             strict
         );
         expect(result).toEqual({ ok: false, rejection: { kind: 'invalid_quantity', quantity } });
@@ -98,11 +99,11 @@ describe('shipOrder', () => {
 
     it('leaves salable quantity unchanged, which is the point of the model', () => {
         const placed = placeOrder(
-            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 3 },
+            { stock: stock(10), entries: [], orderId: 'o-1', quantity: 3, now },
             strict
         );
         const afterPlacement = apply([], placed);
-        expect(salableQuantity(stock(10), afterPlacement, strict)).toBe(7);
+        expect(salableQuantity(stock(10), afterPlacement, strict, now)).toBe(7);
 
         const shipped = shipOrder({
             stock: stock(10),
@@ -113,7 +114,7 @@ describe('shipOrder', () => {
         const afterShipment = apply(afterPlacement, shipped);
         expect(shipped.ok && shipped.physicalDelta).toBe(-3);
         expect(netReservations(afterShipment)).toBe(0);
-        expect(salableQuantity(stock(7), afterShipment, strict)).toBe(7);
+        expect(salableQuantity(stock(7), afterShipment, strict, now)).toBe(7);
     });
 
     it('ships in parts, leaving the remainder outstanding', () => {
@@ -161,7 +162,7 @@ describe('cancelOrder', () => {
         expect(result.ok).toBe(true);
         if (!result.ok) return;
         expect(result.physicalDelta).toBe(0);
-        expect(salableQuantity(stock(10), apply(entries, result), strict)).toBe(10);
+        expect(salableQuantity(stock(10), apply(entries, result), strict, now)).toBe(10);
     });
 
     it('refuses to release more than was committed', () => {
@@ -207,11 +208,11 @@ describe('the ledger does not prevent an oversell on its own', () => {
         const ledger: LedgerEntry[] = [];
 
         const first = placeOrder(
-            { stock: onHand, entries: ledger, orderId: 'o-1', quantity: 1 },
+            { stock: onHand, entries: ledger, orderId: 'o-1', quantity: 1, now },
             strict
         );
         const second = placeOrder(
-            { stock: onHand, entries: ledger, orderId: 'o-2', quantity: 1 },
+            { stock: onHand, entries: ledger, orderId: 'o-2', quantity: 1, now },
             strict
         );
 
@@ -219,20 +220,20 @@ describe('the ledger does not prevent an oversell on its own', () => {
         expect(second.ok).toBe(true);
 
         const afterBoth = apply(apply(ledger, first), second);
-        expect(salableQuantity(onHand, afterBoth, strict)).toBe(-1);
+        expect(salableQuantity(onHand, afterBoth, strict, now)).toBe(-1);
         expect(netReservations(afterBoth)).toBe(-2);
     });
 
     it('refuses the second commitment when the first one has already been appended', () => {
         const onHand = stock(1);
         const first = placeOrder(
-            { stock: onHand, entries: [], orderId: 'o-1', quantity: 1 },
+            { stock: onHand, entries: [], orderId: 'o-1', quantity: 1, now },
             strict
         );
         const afterFirst = apply([], first);
 
         const second = placeOrder(
-            { stock: onHand, entries: afterFirst, orderId: 'o-2', quantity: 1 },
+            { stock: onHand, entries: afterFirst, orderId: 'o-2', quantity: 1, now },
             strict
         );
         expect(second).toEqual({

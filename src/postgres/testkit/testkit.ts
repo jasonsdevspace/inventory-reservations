@@ -3,7 +3,7 @@ import { netReservations, salableQuantity } from '../../domain/ledger/ledger.js'
 import type { CommandResult, LedgerEntry, OversellPolicy } from '../../domain/types.js';
 import { createMerchant } from '../merchants/merchants.js';
 import { migrate } from '../migrate/migrate.js';
-import type { Outcome } from '../store/store.js';
+import { ENTRY_COLUMNS, entryFromRow, type Outcome } from '../store/store.js';
 
 /**
  * Helpers shared by the integration tests. Not part of the shipped surface.
@@ -115,27 +115,19 @@ export const readState = async (
     );
     const physical = stockResult.rows[0]?.physical ?? 0;
 
-    const entryResult = await pool.query<{
-        sku: string;
-        order_id: string;
-        quantity: number;
-        reason: LedgerEntry['reason'];
-    }>(
-        `select sku, order_id, quantity, reason from reservations
+    const entryResult = await pool.query<Parameters<typeof entryFromRow>[0]>(
+        `select ${ENTRY_COLUMNS} from reservations
          where merchant_id = $1 and sku = $2 order by id`,
         [merchantId, sku]
     );
-    const entries = entryResult.rows.map((row) => ({
-        sku: row.sku,
-        orderId: row.order_id,
-        quantity: row.quantity,
-        reason: row.reason,
-    }));
+    const entries = entryResult.rows.map(entryFromRow);
+    const clock = await pool.query<{ now: Date }>('select clock_timestamp() as now');
+    const now = clock.rows[0]?.now ?? new Date();
 
     return {
         physical,
         net: netReservations(entries),
-        salable: salableQuantity({ sku, physical }, entries, policy),
+        salable: salableQuantity({ sku, physical }, entries, policy, now),
         entries,
     };
 };
