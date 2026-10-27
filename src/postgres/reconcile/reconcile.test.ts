@@ -158,25 +158,36 @@ describe('a broken history', () => {
     });
 
     it('finds an oversell that a deployment with no concurrency control let through', async () => {
-        await seedStock(owner, merchantId, 'LAST-ONE', 1);
         await prewarmPool(pool, 12);
         const store = createStore(pool, 'none');
-        for (let round = 0; round < 5; round += 1) {
-            await Promise.all(
+
+        // Each round races for a fresh unit, because a round that happens not
+        // to overlap sells its unit once, and racing for an empty shelf again
+        // could never oversell. The first round that does is the one checked.
+        let oversold: string | undefined;
+        for (let round = 0; round < 5 && !oversold; round += 1) {
+            const target = `LAST-ONE-${round}`;
+            await seedStock(owner, merchantId, target, 1);
+            const outcomes = await Promise.all(
                 Array.from({ length: 12 }, (_, index) =>
                     store.placeOrder(
-                        {
-                            merchantId,
-                            sku: 'LAST-ONE',
-                            orderId: `o-${round}-${index}`,
-                            quantity: 1,
-                        },
+                        { merchantId, sku: target, orderId: `o-${index}`, quantity: 1 },
                         strict
                     )
                 )
             );
+            const accepted = outcomes.filter(
+                (outcome) => outcome.kind === 'applied' && outcome.result.ok
+            ).length;
+            if (accepted > 1) oversold = target;
         }
-        expect(await run()).toMatchObject([{ kind: 'overcommitted', sku: 'LAST-ONE' }]);
+
+        expect(oversold).toBeDefined();
+        expect(await run()).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ kind: 'overcommitted', sku: oversold }),
+            ])
+        );
     });
 
     it('keeps each merchant findings under that merchant', async () => {
