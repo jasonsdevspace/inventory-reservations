@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { hashRequest, purgeExpiredKeys } from './idempotency.js';
+import { hashRequest } from './fingerprint.js';
+import { purgeExpiredKeys } from './idempotency.js';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
 import { createStore } from '../store/store.js';
 import {

@@ -1,4 +1,4 @@
-import type pg from 'pg';
+import type { ConnectionPool } from '../pool/connection.js';
 import type { Store } from '../store/store.js';
 
 /**
@@ -40,7 +40,7 @@ export const DEFAULT_LOOKBACK = '7 days';
 const DEFAULT_BATCH_SIZE = 500;
 
 export const expireDueHolds = async (
-    pool: pg.Pool,
+    pool: ConnectionPool,
     store: Store,
     { lookback = DEFAULT_LOOKBACK, batchSize = DEFAULT_BATCH_SIZE }: SweepOptions = {}
 ): Promise<SweepReport> => {

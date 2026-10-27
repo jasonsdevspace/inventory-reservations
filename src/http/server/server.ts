@@ -1,7 +1,8 @@
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from 'fastify';
 import type pg from 'pg';
-import { hashRequest, type IdempotencyContext } from '../../postgres/idempotency/idempotency.js';
+import { hashRequest } from '../../postgres/idempotency/fingerprint.js';
+import type { IdempotencyContext } from '../../postgres/idempotency/idempotency.js';
 import {
     hashApiKey,
     merchantForApiKey,

@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createAppPool, createOwnerPool } from '../pool/pool.js';
-import { hashRequest } from '../idempotency/idempotency.js';
+import { hashRequest } from '../idempotency/fingerprint.js';
 import { createStore, parseStrategy, type Strategy } from './store.js';
 import {
     prepareDatabase,
@@ -398,5 +398,35 @@ describe('a wait that runs past lock_timeout', () => {
         expect(outcome.kind).toBe('in_flight');
         const state = await readState(owner, merchantId, sku);
         expect(state.net).toBe(0);
+    });
+});
+
+/*
+ * A retry must not need a second connection while it holds the first.
+ *
+ * A duplicate key is resolved by reading what the original stored. Doing that
+ * while still holding the connection the duplicate arrived on means every
+ * duplicate needs two at once, and enough of them together take the whole
+ * pool and wait on each other until the connection timeout. A pool of one
+ * makes the wait certain, which is what the in-browser demo runs on.
+ */
+describe('resolving a duplicate key', () => {
+    it('answers a retry on a pool of one connection', async () => {
+        const single = createAppPool({ max: 1 });
+        try {
+            const store = createStore(single, 'row_lock');
+            const command = { merchantId, sku, orderId: 'o-1', quantity: 1 };
+            const idempotency = {
+                merchantId,
+                key: 'retry-1',
+                endpoint: 'place',
+                requestHash: hashRequest({ sku, orderId: 'o-1', quantity: 1 }),
+            };
+
+            expect((await store.placeOrder(command, strict, idempotency)).kind).toBe('applied');
+            expect((await store.placeOrder(command, strict, idempotency)).kind).toBe('replayed');
+        } finally {
+            await single.end();
+        }
     });
 });

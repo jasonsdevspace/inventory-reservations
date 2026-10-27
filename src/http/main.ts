@@ -1,4 +1,5 @@
-import { assertBoundByRowLevelSecurity, createAppPool } from '../postgres/pool/pool.js';
+import { assertBoundByRowLevelSecurity } from '../postgres/pool/connection.js';
+import { createAppPool } from '../postgres/pool/pool.js';
 import { parseStrategy } from '../postgres/store/store.js';
 import { parsePolicy } from './policy/policy.js';
 import { createServer, parseRateLimit } from './server/server.js';

@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createAppPool, createOwnerPool, withTenant } from './pool.js';
+import { withTenant } from './connection.js';
+import { createAppPool, createOwnerPool } from './pool.js';
 import { prepareDatabase } from '../testkit/testkit.js';
 
 /*
