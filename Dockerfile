@@ -9,7 +9,7 @@
 # uses musl rather than glibc, and a native dependency compiled against one
 # fails to load against the other. Nothing here is native today, which is why
 # the mismatch worked, and why it would have broken the day something was.
-FROM node:24-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -19,7 +19,7 @@ RUN npm run build
 
 # Production dependencies only, resolved separately so the dev toolchain never
 # reaches the final image.
-FROM node:24-bookworm-slim AS dependencies
+FROM node:26-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
