@@ -183,6 +183,7 @@ describe('without a concurrency control the ledger records an oversell', () => {
 });
 
 const CONTENDERS = 12;
+const GUARD_ROUNDS = 5;
 
 describe('the harness genuinely contends', () => {
     /*
@@ -195,29 +196,38 @@ describe('the harness genuinely contends', () => {
      * This failed to be true on the first attempt. Without a warm pool the
      * attempts never overlapped, and every strategy looked correct, including
      * the one that does nothing.
+     *
+     * Given a few rounds rather than one. On a slow CI runner a single round
+     * can occasionally land without overlap, and that shows only that one
+     * round was unlucky, not that the harness cannot contend. A harness that
+     * never contends still fails every round, which is what this guards.
      */
     it('oversells badly with no concurrency control', async () => {
         await resetDatabase(owner);
         await seedMerchant(owner, merchantId);
-        await seedStock(owner, merchantId, sku, 1);
         await prewarmPool(pool, CONTENDERS);
-
         const store = createStore(pool, 'none');
-        const results = (
-            await Promise.all(
-                Array.from({ length: CONTENDERS }, (_, index) =>
-                    store.placeOrder(
-                        { merchantId, sku, orderId: `o-${index}`, quantity: 1 },
-                        strict
+
+        let accepted = 0;
+        let raced = sku;
+        for (let round = 0; round < GUARD_ROUNDS && accepted <= 1; round += 1) {
+            raced = `${sku}-round-${round}`;
+            await seedStock(owner, merchantId, raced, 1);
+            const results = (
+                await Promise.all(
+                    Array.from({ length: CONTENDERS }, (_, index) =>
+                        store.placeOrder(
+                            { merchantId, sku: raced, orderId: `o-${index}`, quantity: 1 },
+                            strict
+                        )
                     )
                 )
-            )
-        ).map(resultOf);
+            ).map(resultOf);
+            accepted = results.filter((result) => result.ok).length;
+        }
 
-        const accepted = results.filter((result) => result.ok).length;
         expect(accepted).toBeGreaterThan(1);
-
-        const state = await readState(owner, merchantId, sku);
+        const state = await readState(owner, merchantId, raced);
         expect(state.net).toBe(-accepted);
         expect(state.salable).toBeLessThan(0);
     });
