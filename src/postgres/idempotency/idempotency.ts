@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import type pg from 'pg';
+import type { Queryable } from '../pool/connection.js';
 
 /**
  * Idempotency for mutating requests.
@@ -37,25 +36,7 @@ export interface IdempotencyContext {
     readonly requestHash: string;
 }
 
-/**
- * A stable fingerprint of the request arguments.
- *
- * Key order in the input does not change the hash, so a client that serializes
- * its JSON differently between attempts is not treated as having asked
- * something new.
- */
-export const hashRequest = (payload: Record<string, unknown>): string => {
-    const stable = Object.keys(payload)
-        .sort()
-        .map((key) => `${key}=${JSON.stringify(payload[key])}`)
-        .join('&');
-    return createHash('sha256').update(stable).digest('hex');
-};
-
-export const claimKey = async (
-    client: pg.PoolClient,
-    context: IdempotencyContext
-): Promise<void> => {
+export const claimKey = async (client: Queryable, context: IdempotencyContext): Promise<void> => {
     await client.query(
         `insert into idempotency_keys (merchant_id, key, endpoint, request_hash)
          values ($1, $2, $3, $4)`,
@@ -72,7 +53,7 @@ export const claimKey = async (
  * one merchant's answer from overwriting another's when two choose the same key.
  */
 export const recordResult = async (
-    client: pg.PoolClient,
+    client: Queryable,
     context: IdempotencyContext,
     result: unknown
 ): Promise<void> => {
@@ -97,7 +78,7 @@ export interface ExistingKey {
  * still in flight rather than being handed its answer.
  */
 export const readKey = async (
-    client: pg.PoolClient,
+    client: Queryable,
     context: IdempotencyContext
 ): Promise<ExistingKey | null> => {
     const { rows } = await client.query<{ request_hash: string; result: unknown | null }>(
@@ -121,7 +102,7 @@ export const readKey = async (
  * triggering. The window is a parameter because the right value depends on how
  * long the callers in front of it keep retrying.
  */
-export const purgeExpiredKeys = async (pool: pg.Pool, olderThan: string): Promise<number> => {
+export const purgeExpiredKeys = async (pool: Queryable, olderThan: string): Promise<number> => {
     const { rowCount } = await pool.query(
         `delete from idempotency_keys where created_at < now() - $1::interval`,
         [olderThan]

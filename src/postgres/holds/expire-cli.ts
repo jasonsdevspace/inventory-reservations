@@ -1,4 +1,5 @@
-import { assertBoundByRowLevelSecurity, createAppPool } from '../pool/pool.js';
+import { assertBoundByRowLevelSecurity } from '../pool/connection.js';
+import { createAppPool } from '../pool/pool.js';
 import { createStore, parseStrategy } from '../store/store.js';
 import { expireDueHolds } from './sweeper.js';
 

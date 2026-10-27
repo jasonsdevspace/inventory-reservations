@@ -1,8 +1,7 @@
-import type pg from 'pg';
 import { reconcile, type Finding } from '../../domain/reconcile/reconcile.js';
 import type { OversellPolicy } from '../../domain/types.js';
 import { DEFAULT_LOOKBACK } from '../holds/sweeper.js';
-import { withTenant } from '../pool/pool.js';
+import { withTenant, type ConnectionPool } from '../pool/connection.js';
 import type { Store } from '../store/store.js';
 
 /**
@@ -27,7 +26,7 @@ export interface ReconcileOptions {
     readonly lookback?: string;
 }
 
-const secondsIn = async (pool: pg.Pool, interval: string): Promise<number> => {
+const secondsIn = async (pool: ConnectionPool, interval: string): Promise<number> => {
     const { rows } = await pool.query<{ seconds: string }>(
         'select extract(epoch from $1::interval) as seconds',
         [interval]
@@ -36,7 +35,7 @@ const secondsIn = async (pool: pg.Pool, interval: string): Promise<number> => {
 };
 
 export const reconcileAll = async (
-    pool: pg.Pool,
+    pool: ConnectionPool,
     store: Store,
     { policy, lookback = DEFAULT_LOOKBACK }: ReconcileOptions
 ): Promise<MerchantFinding[]> => {

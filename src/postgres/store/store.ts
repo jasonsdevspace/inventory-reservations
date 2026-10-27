@@ -1,5 +1,10 @@
-import type pg from 'pg';
-import { releaseAfter, rollBackAfter, withTenant } from '../pool/pool.js';
+import {
+    releaseAfter,
+    rollBackAfter,
+    withTenant,
+    type Connection,
+    type ConnectionPool,
+} from '../pool/connection.js';
 import { cancelOrder, placeOrder, shipOrder } from '../../domain/commands/commands.js';
 import {
     convertHold,
@@ -125,7 +130,7 @@ interface HoldCommand extends Target {
  * wait. Replaceable so a test can stop time, or move it on while a
  * transaction waits.
  */
-export type Clock = (client: pg.PoolClient) => Promise<Date>;
+export type Clock = (client: Connection) => Promise<Date>;
 
 const databaseClock: Clock = async (client) => {
     const { rows } = await client.query<{ now: Date }>('select clock_timestamp() as now');
@@ -183,7 +188,7 @@ export type Outcome =
     | { readonly kind: 'contention' };
 
 const readStock = async (
-    client: pg.PoolClient,
+    client: Connection,
     merchantId: string,
     sku: string,
     lock: boolean
@@ -238,7 +243,7 @@ export const entryFromRow = (row: EntryRow): LedgerEntry => {
 };
 
 const readEntries = async (
-    client: pg.PoolClient,
+    client: Connection,
     merchantId: string,
     sku: string
 ): Promise<LedgerEntry[]> => {
@@ -259,7 +264,7 @@ const readEntries = async (
  * the decision used, and a hold's start is what caps how long it can last.
  */
 const appendEntries = async (
-    client: pg.PoolClient,
+    client: Connection,
     merchantId: string,
     entries: readonly LedgerEntry[]
 ): Promise<void> => {
@@ -284,7 +289,7 @@ const appendEntries = async (
 };
 
 const applyPhysicalDelta = async (
-    client: pg.PoolClient,
+    client: Connection,
     merchantId: string,
     sku: string,
     delta: number
@@ -311,7 +316,10 @@ const isSerializationFailure = (error: unknown): boolean =>
  * is a replay, a client bug or a concurrent duplicate depends on what is in
  * it.
  */
-const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Promise<Outcome> => {
+const resolveDuplicate = async (
+    pool: ConnectionPool,
+    context: IdempotencyContext
+): Promise<Outcome> => {
     // Inside a tenant scoped transaction, because the lookup is subject to the
     // same row level policies as everything else. Without that it finds
     // nothing and reports every duplicate as still running.
@@ -341,7 +349,16 @@ const resolveDuplicate = async (pool: pg.Pool, context: IdempotencyContext): Pro
  * never happens with one checked out, which is how a pool starves under
  * exactly the contention this exists for.
  */
-type Attempt = { readonly done: true; readonly outcome: Outcome } | { readonly done: false };
+type Attempt =
+    | { readonly done: true; readonly outcome: Outcome }
+    | { readonly done: false }
+    /**
+     * The key was already claimed. Resolved by the caller once this attempt's
+     * connection is back in the pool, because resolving it needs a connection
+     * of its own, and taking a second while holding the first is how a burst
+     * of retries exhausts the pool and waits on itself.
+     */
+    | { readonly done: 'duplicate' };
 
 /**
  * A decision, given a consistent view of one SKU and the time it is made at.
@@ -349,7 +366,7 @@ type Attempt = { readonly done: true; readonly outcome: Outcome } | { readonly d
 type Decide = (stock: Stock, entries: readonly LedgerEntry[], now: Date) => CommandResult;
 
 const runAttempt = async (
-    pool: pg.Pool,
+    pool: ConnectionPool,
     strategy: Strategy,
     clock: Clock,
     command: Target,
@@ -414,9 +431,7 @@ const runAttempt = async (
 
         // The key was already claimed, so this request duplicates one that has
         // run or is still running.
-        if (idempotency && errorCode(error) === UNIQUE_VIOLATION) {
-            return { done: true, outcome: await resolveDuplicate(pool, idempotency) };
-        }
+        if (idempotency && errorCode(error) === UNIQUE_VIOLATION) return { done: 'duplicate' };
 
         // Another transaction won the race. Nothing was applied, so replaying
         // the work is safe and the repeat sees the winner's effect.
@@ -450,7 +465,7 @@ const runAttempt = async (
  * client mistake.
  */
 const runCommand = async (
-    pool: pg.Pool,
+    pool: ConnectionPool,
     strategy: Strategy,
     { clock, onRetry }: Required<Pick<StoreOptions, 'clock'>> & Pick<StoreOptions, 'onRetry'>,
     command: Target,
@@ -459,7 +474,8 @@ const runCommand = async (
 ): Promise<Outcome> => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         const result = await runAttempt(pool, strategy, clock, command, decide, idempotency);
-        if (result.done) return result.outcome;
+        if (result.done === 'duplicate' && idempotency) return resolveDuplicate(pool, idempotency);
+        if (result.done === true) return result.outcome;
         if (attempt < MAX_ATTEMPTS) {
             onRetry?.();
             await pause(backoffFor(attempt));
@@ -470,7 +486,7 @@ const runCommand = async (
 };
 
 export const createStore = (
-    pool: pg.Pool,
+    pool: ConnectionPool,
     strategy: Strategy,
     { clock = databaseClock, onRetry }: StoreOptions = {}
 ) => {
