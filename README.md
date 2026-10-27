@@ -2,7 +2,7 @@
 
 An inventory service that keeps two customers from buying the last unit of the same product.
 
-**[Try it in your browser](https://jasonsdevspace.github.io/inventory-reservations/).** The demo runs
+**[Try it in your browser](https://jasonsdevspace.com/inventory-reservations/).** The demo runs
 this service's own store code against Postgres in the page, with the same schema, roles and row
 level security as a deployment. Nothing to install.
 
