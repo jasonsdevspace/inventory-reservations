@@ -21,6 +21,7 @@ from the start.
 - Three concurrency strategies, including one that is wrong on purpose so the bug can be reproduced
 - Idempotent writes, so a retried request never places a second order
 - Checkout holds that expire on their own, so an abandoned cart never keeps stock off sale
+- A reconciliation command that finds a ledger gone wrong, and leaves the fix to a person
 - Multi-tenant data, isolated by API key and backed by Postgres row level security
 - A distroless container, health and readiness probes, and structured logs that never contain keys
 
@@ -377,6 +378,7 @@ src/
 ├── domain/            business logic, no I/O
 │   ├── commands/      place, ship and cancel
 │   ├── holds/         checkout holds and their expiry
+│   ├── reconcile/     the rules a correct history keeps
 │   ├── ledger/        quantities derived from the entries
 │   ├── types.ts       shared types
 │   └── index.ts       public entry point
@@ -388,6 +390,7 @@ src/
     ├── store/         runs commands under each concurrency strategy
     ├── holds/         the job that records expired holds
     ├── bench/         the contention benchmark
+    ├── reconcile/     checks every ledger and reports what is wrong
     ├── idempotency/   stored responses, plus the cleanup job
     ├── pool/          connections, tenancy and timeouts
     ├── merchants/     API key lookup
@@ -405,29 +408,35 @@ development needs none of them.
 <details>
 <summary><b>All environment variables</b></summary>
 
-| Variable                | Used by            | Meaning                                   | Default         |
-| ----------------------- | ------------------ | ----------------------------------------- | --------------- |
-| `APP_DATABASE_URL`      | service, holds job | connection as the restricted app role     | Compose service |
-| `PORT`                  | service            | port to listen on                         | `8080`          |
-| `CONCURRENCY_STRATEGY`  | service, holds job | `none`, `row_lock` or `serializable`      | `row_lock`      |
-| `OVERSELL_POLICY`       | service            | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
-| `RATE_LIMIT_PER_MINUTE` | service            | requests each API key may make per minute | `600`           |
-| `DATABASE_URL`          | migration          | connection as the owner                   | Compose service |
-| `APP_DB_PASSWORD`       | migration          | password given to the app role            | development one |
-| `SEED_DEMO`             | migration          | `true` loads the demo merchants and stock | unset           |
-| `IDEMPOTENCY_RETENTION` | retention          | how long to keep idempotency keys         | `24 hours`      |
-| `HOLD_SWEEP_LOOKBACK`   | holds job          | how far back to look for expired holds    | `7 days`        |
+| Variable                | Used by                       | Meaning                                   | Default         |
+| ----------------------- | ----------------------------- | ----------------------------------------- | --------------- |
+| `APP_DATABASE_URL`      | service, holds job, reconcile | connection as the restricted app role     | Compose service |
+| `PORT`                  | service                       | port to listen on                         | `8080`          |
+| `CONCURRENCY_STRATEGY`  | service, holds job, reconcile | `none`, `row_lock` or `serializable`      | `row_lock`      |
+| `OVERSELL_POLICY`       | service, reconcile            | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
+| `RATE_LIMIT_PER_MINUTE` | service                       | requests each API key may make per minute | `600`           |
+| `DATABASE_URL`          | migration                     | connection as the owner                   | Compose service |
+| `APP_DB_PASSWORD`       | migration                     | password given to the app role            | development one |
+| `SEED_DEMO`             | migration                     | `true` loads the demo merchants and stock | unset           |
+| `IDEMPOTENCY_RETENTION` | retention                     | how long to keep idempotency keys         | `24 hours`      |
+| `HOLD_SWEEP_LOOKBACK`   | holds job, reconcile          | how far back to look for expired holds    | `7 days`        |
 
 </details>
 
-Two maintenance jobs are meant to run on a schedule. One removes expired idempotency keys, and the
-other records the end of expired checkout holds. Each merchant's hold lifetime is the
-`hold_lifetime_seconds` column of the `merchants` table.
+Three maintenance jobs are meant to run on a schedule. One removes expired idempotency keys, one
+records the end of expired checkout holds, and one checks every ledger against the rules a correct
+history keeps. Each merchant's hold lifetime is the `hold_lifetime_seconds` column of the
+`merchants` table.
 
 ```bash
 npm run retention
 npm run expire-holds
+npm run reconcile
 ```
+
+Reconciliation prints one JSON line per problem it finds and exits with status 1 if there are any,
+so a scheduler can alert on it. It writes nothing. Why fixing a problem is left to a person is in
+[decision record 5](docs/decisions/0005-reconciliation-detects-but-does-not-repair.md).
 
 ## Background
 
