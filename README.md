@@ -15,6 +15,10 @@ small, complete example of how I approach that kind of problem. Model the domain
 the failure with a test before fixing it, and treat security and operations as part of the work
 from the start.
 
+**[Try it in your browser](https://jasonsdevspace.github.io/inventory-reservations/).** The demo runs
+this service's own store code against Postgres in the page, with the same schema, roles and row
+level security as a deployment. Nothing to install.
+
 **What's inside**
 
 - A pure domain core with no database or framework code in it
@@ -418,6 +422,7 @@ The reasoning, and the options it rules out, are in
 Each module sits in its own folder with its tests and any files it reads.
 
 ```
+demo/                  the browser demo, the same store on Postgres in the page
 src/
 ├── domain/            business logic, no I/O
 │   ├── commands/      place, ship and cancel

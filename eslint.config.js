@@ -3,10 +3,10 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-    { ignores: ['coverage', 'node_modules'] },
+    { ignores: ['**/coverage', '**/node_modules', '**/dist'] },
     {
         extends: [js.configs.recommended, ...tseslint.configs.recommended],
-        files: ['**/*.{ts,mjs,js}'],
+        files: ['**/*.{ts,tsx,mjs,js}'],
         languageOptions: {
             ecmaVersion: 2023,
             globals: globals.node,
@@ -24,6 +24,11 @@ export default tseslint.config(
             // missing case should be a type error, not a silent fallthrough.
             '@typescript-eslint/switch-exhaustiveness-check': 'off',
         },
+    },
+    {
+        // The demo runs in the browser, not in Node.
+        files: ['demo/src/**/*.{ts,tsx}'],
+        languageOptions: { globals: globals.browser },
     },
     {
         // The code the browser demo runs, unchanged, against Postgres in the

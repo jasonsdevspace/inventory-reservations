@@ -1,0 +1,73 @@
+name: Demo
+
+# Publishes the browser demo to GitHub Pages, at /inventory-reservations/.
+# Runs when anything the demo is built from changes on main, and by hand.
+on:
+    push:
+        branches: [main]
+        paths:
+            - 'demo/**'
+            - 'src/domain/**'
+            - 'src/postgres/**'
+            - '.github/workflows/demo.yml'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+# One deployment at a time, and a newer one replaces any still waiting.
+concurrency:
+    group: pages
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                working-directory: demo
+        steps:
+            - name: Checkout
+              uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+              with:
+                  persist-credentials: false
+
+            - name: Setup Node
+              uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+              with:
+                  node-version: '24'
+                  cache: 'npm'
+                  cache-dependency-path: demo/package-lock.json
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Test against Postgres in the page
+              run: npm test
+
+            - name: Build for the project site
+              run: npm run build
+              env:
+                  DEMO_BASE: /inventory-reservations/
+
+            - name: Configure Pages
+              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+            - name: Upload the site
+              uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+              with:
+                  path: demo/dist
+
+    deploy:
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+            pages: write
+            id-token: write
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
