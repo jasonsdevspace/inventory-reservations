@@ -518,26 +518,9 @@ src/
 
 ## Configuration
 
-Everything is set through environment variables. The defaults match the Compose setup, so local
-development needs none of them.
-
-<details>
-<summary><b>All environment variables</b></summary>
-
-| Variable                | Used by                       | Meaning                                   | Default         |
-| ----------------------- | ----------------------------- | ----------------------------------------- | --------------- |
-| `APP_DATABASE_URL`      | service, holds job, reconcile | connection as the restricted app role     | Compose service |
-| `PORT`                  | service                       | port to listen on                         | `8080`          |
-| `CONCURRENCY_STRATEGY`  | service, holds job, reconcile | `none`, `row_lock` or `serializable`      | `row_lock`      |
-| `OVERSELL_POLICY`       | service, reconcile            | `strict`, `threshold:N` or `backorder:N`  | `strict`        |
-| `RATE_LIMIT_PER_MINUTE` | service                       | requests each API key may make per minute | `600`           |
-| `DATABASE_URL`          | migration                     | connection as the owner                   | Compose service |
-| `APP_DB_PASSWORD`       | migration                     | password given to the app role            | development one |
-| `SEED_DEMO`             | migration                     | `true` loads the demo merchants and stock | unset           |
-| `IDEMPOTENCY_RETENTION` | retention                     | how long to keep idempotency keys         | `24 hours`      |
-| `HOLD_SWEEP_LOOKBACK`   | holds job, reconcile          | how far back to look for expired holds    | `7 days`        |
-
-</details>
+Everything is set through environment variables, and the defaults match the Compose setup, so local
+development needs none of them. The full list, and how to deploy the service, are in
+[docs/operations.md](docs/operations.md).
 
 ## Scheduled jobs
 
@@ -559,32 +542,8 @@ docker compose run --rm reconcile
 While developing, `npm run retention`, `npm run expire-holds` and `npm run reconcile` build the
 code and run it directly instead.
 
-<details>
-<summary><b>Running them in production</b></summary>
-
-Schedule the API's image with whatever runs scheduled work, such as a Kubernetes CronJob, an ECS
-scheduled task or cron, and override its command with the job's script.
-
-| Job          | Command                                      | Environment                                                                          |
-| ------------ | -------------------------------------------- | ------------------------------------------------------------------------------------ |
-| retention    | `dist/postgres/idempotency/retention-cli.js` | `DATABASE_URL`, `IDEMPOTENCY_RETENTION`                                              |
-| expire-holds | `dist/postgres/holds/expire-cli.js`          | `APP_DATABASE_URL`, `CONCURRENCY_STRATEGY`, `HOLD_SWEEP_LOOKBACK`                    |
-| reconcile    | `dist/postgres/reconcile/reconcile-cli.js`   | `APP_DATABASE_URL`, `CONCURRENCY_STRATEGY`, `OVERSELL_POLICY`, `HOLD_SWEEP_LOOKBACK` |
-
-Give each job the same values the API runs with. A job that connects as the service role refuses
-to start with credentials that would bypass row level security, the same check the API makes.
-
-- **Exit status is the alert.** Every job exits 0 when it succeeds and non-zero when it fails.
-  Reconciliation exits 1 when it finds a problem and 2 when it could not finish, so a scheduler can
-  tell a wrong ledger from a broken job without reading its output.
-- **Reconciliation prints one JSON line per problem**, ready for a log pipeline to turn into
-  tickets. It writes nothing, and fixing a problem is left to a person, for the reasons in
-  [decision record 5](docs/decisions/0005-reconciliation-detects-but-does-not-repair.md).
-- **Reconciliation is safe to run against live traffic.** It reads each product in one consistent
-  snapshot and never takes the lock orders use, so it cannot block a checkout. It reads every
-  ledger in full, so at scale it can run against a read replica instead.
-
-</details>
+How to schedule them in production, with each job's command and environment, is in
+[docs/operations.md](docs/operations.md#scheduled-jobs).
 
 ## Background
 
