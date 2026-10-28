@@ -13,7 +13,7 @@ permissions:
 
 # A newer push to a pull request supersedes the run in progress. A push to
 # main does not: a run that has handed an artifact to Pages and is then
-# cancelled leaves the deployment pending, so runs on main wait their turn.
+# canceled leaves the deployment pending, so runs on main wait their turn.
 concurrency:
     group: ci-${{ github.ref }}
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
