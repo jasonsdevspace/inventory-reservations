@@ -2,8 +2,15 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import indexHtml from '../../index.html?raw';
 import { App } from './App.js';
-import { PORTFOLIO_WORK_URL, REPO_URL } from './Portfolio.js';
+import {
+    GITHUB_PROFILE_URL,
+    LICENSE_URL,
+    PORTFOLIO_URL,
+    PORTFOLIO_WORK_URL,
+    REPO_URL,
+} from './Portfolio.js';
 
 /*
  * The strip and the footer say whose demo this is. Rendered to markup with
@@ -37,12 +44,26 @@ describe('whose demo this is', () => {
     it('ends with a footer that carries the portfolio, the profile and the license', () => {
         const footer = /<footer class="colophon">([\s\S]*?)<\/footer>/.exec(html)?.[1] ?? '';
         expect(html.indexOf('<footer class="colophon"')).toBeGreaterThan(html.indexOf('</main>'));
-        for (const href of [
-            'https://jasonsdevspace.com/',
-            'https://github.com/jasonsdevspace"',
-            `${REPO_URL}/blob/main/LICENSE`,
-        ]) {
-            expect(footer).toContain(`href="${href}`);
-        }
+        const hrefs = [...footer.matchAll(/<a href="([^"]+)">/g)].map((m) => m[1]);
+        expect(hrefs).toEqual([PORTFOLIO_URL, REPO_URL, GITHUB_PROFILE_URL, LICENSE_URL]);
+    });
+});
+
+describe('the theme the portfolio saved', () => {
+    const page = indexHtml;
+    const script = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? '';
+
+    it('is read from the shared key before the first paint, with both values', () => {
+        expect(page.indexOf('<script>')).toBeLessThan(page.indexOf('</head>'));
+        expect(script).toContain("localStorage.getItem('theme')");
+        expect(script).toContain("'dark'");
+        expect(script).toContain("'light'");
+        expect(script).toContain("setAttribute('data-theme'");
+    });
+
+    it('follows the system when nothing is saved, and the portfolio when it saves', () => {
+        expect(script).toContain("matchMedia('(prefers-color-scheme: dark)')");
+        expect(script).toContain("media.addEventListener('change'");
+        expect(script).toContain("addEventListener('storage'");
     });
 });

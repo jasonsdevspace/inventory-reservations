@@ -66,13 +66,20 @@ body {
 
 .portfolio-row {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: 0 16px;
     max-width: 1040px;
-    min-height: 40px;
     margin: 0 auto;
     padding: 0 16px;
+}
+
+/* The whole row height is the target, not the one line of small text. */
+.portfolio a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
 }
 
 .portfolio a,
@@ -81,7 +88,9 @@ body {
 }
 
 .portfolio a:hover,
-.colophon a:hover {
+.portfolio a:focus-visible,
+.colophon a:hover,
+.colophon a:focus-visible {
     color: var(--text);
 }
 

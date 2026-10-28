@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
+import { REPO_URL } from './Portfolio.js';
 import { type Buyer, type BuyerState, RACES, type Strategy } from './race-script.js';
-
-const REPO = 'https://github.com/jasonsdevspace/inventory-reservations';
 
 const STRATEGIES: readonly { id: Strategy; name: string; summary: string }[] = [
     { id: 'none', name: 'No protection', summary: 'Kept in the service to prove the bug is real.' },
@@ -138,7 +137,7 @@ export const Race = () => {
             <p className="hint footnote">
                 Postgres in this page has a single connection, so this walks through the race rather
                 than running it. The real race runs against Postgres in the{' '}
-                <a href={`${REPO}/blob/main/src/postgres/store/store.test.ts`}>test suite</a> on
+                <a href={`${REPO_URL}/blob/main/src/postgres/store/store.test.ts`}>test suite</a> on
                 every change, twelve buyers at once, with a guard that fails if the unprotected
                 strategy ever stops overselling.
             </p>
