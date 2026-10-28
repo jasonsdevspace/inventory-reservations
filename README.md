@@ -8,8 +8,8 @@ level security as a deployment. Nothing to install.
 
 **Why I built it**
 
-I spent eight years at Adobe, including leading a team on Adobe Commerce, where inventory is one of
-those problems that looks simple until two people want the last unit at the same moment. This is a
+At Adobe I led a team on Adobe Commerce, where inventory is one of those problems that looks
+simple until two people want the last unit at the same moment. This is a
 small, complete example of how I approach that kind of problem. Model the domain honestly, prove
 the failure with a test before fixing it, and treat security and operations as part of the work
 from the start.
