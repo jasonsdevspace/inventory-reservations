@@ -8,6 +8,21 @@
             content="An inventory ledger that never oversells, running its own store code against Postgres in your browser."
         />
         <title>Inventory reservations, live</title>
+        <script>
+            // The theme the portfolio saved, or the system's, set before the first
+            // paint so the page never flashes the other one. Same origin, same
+            // key, so jasonsdevspace.com and this page switch together.
+            (function () {
+                try {
+                    var s = localStorage.getItem('theme'),
+                        d = window.matchMedia('(prefers-color-scheme: dark)').matches,
+                        t = s === 'dark' || s === 'light' ? s : d ? 'dark' : 'light';
+                    document.documentElement.setAttribute('data-theme', t);
+                } catch (e) {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            })();
+        </script>
     </head>
     <body>
         <div id="root"></div>
