@@ -5,13 +5,18 @@ on:
         branches: [main]
     pull_request:
         branches: [main]
+    # A deploy by hand, which still runs every check first.
+    workflow_dispatch:
 
 permissions:
     contents: read
 
+# A newer push to a pull request supersedes the run in progress. A push to
+# main does not: a run that has handed an artifact to Pages and is then
+# cancelled leaves the deployment pending, so runs on main wait their turn.
 concurrency:
     group: ci-${{ github.ref }}
-    cancel-in-progress: true
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
     verify:
@@ -122,3 +127,55 @@ jobs:
 
             - name: Type-check and build
               run: npm run build
+
+    # The browser demo, published to GitHub Pages at /inventory-reservations/
+    # once everything above has passed on main. A merge that fails a check,
+    # including the tests against Postgres, is never deployed.
+    deploy:
+        needs: [verify, demo]
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        runs-on: ubuntu-latest
+        # A job's own permissions replace the workflow's, so the read the
+        # checkout needs is named here beside the two Pages needs.
+        permissions:
+            contents: read
+            pages: write
+            id-token: write
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        defaults:
+            run:
+                working-directory: demo
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Setup Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: '24'
+                  cache: 'npm'
+                  cache-dependency-path: demo/package-lock.json
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build for the project site
+              run: npm run build
+              env:
+                  DEMO_BASE: /inventory-reservations/
+
+            - name: Configure Pages
+              uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+            - name: Upload the site
+              uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+              with:
+                  path: demo/dist
+
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
