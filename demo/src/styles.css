@@ -5,9 +5,10 @@
     --muted: #5f5f5a;
     --line: #e2e1dc;
     --accent: #2f5bd3;
-    --reserved: #c9721c;
-    --held: #7a5bd6;
-    --free: #2f8a55;
+    /* Deep enough to carry text on the surface at 4.5:1, as well as the bar. */
+    --reserved: #9e580d;
+    --held: #6d4dcc;
+    --free: #27784a;
     --refused: #b3261e;
     --refused-bg: #fbeceb;
     --ok-bg: #e9f5ee;

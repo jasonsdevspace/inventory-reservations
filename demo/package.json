@@ -9,7 +9,9 @@
         "build": "npm run type-check && vite build",
         "preview": "vite preview",
         "type-check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
-        "test": "vitest run"
+        "test": "vitest run",
+        "e2e": "playwright test",
+        "lighthouse": "node scripts/lighthouse.mjs"
     },
     "license": "MIT",
     "dependencies": {
@@ -18,10 +20,14 @@
         "react-dom": "19.3.1"
     },
     "devDependencies": {
+        "@axe-core/playwright": "4.14.0",
+        "@playwright/test": "1.64.1",
         "@types/node": "26.6.5",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
         "@vitejs/plugin-react": "6.1.2",
+        "chrome-launcher": "1.2.2",
+        "lighthouse": "13.6.0",
         "typescript": "6.0.3",
         "vite": "8.3.5",
         "vitest": "5.0.5"

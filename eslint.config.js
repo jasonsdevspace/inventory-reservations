@@ -80,7 +80,13 @@ export default tseslint.config(
         extends: [...tseslint.configs.recommendedTypeChecked],
         languageOptions: {
             parserOptions: {
-                projectService: { allowDefaultProject: ['demo/vite.config.ts'] },
+                projectService: {
+                    allowDefaultProject: [
+                        'demo/vite.config.ts',
+                        'demo/playwright.config.ts',
+                        'demo/e2e/*.ts',
+                    ],
+                },
                 tsconfigRootDir: import.meta.dirname,
             },
         },
