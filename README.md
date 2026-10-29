@@ -153,7 +153,9 @@ Use `npm test` instead for watch mode while you work.
 
 CI builds the browser demo in `demo/` as it is published, visits it in Chromium on a desktop and a
 phone with an axe audit on each visit, and audits it with Lighthouse: accessibility has to score a
-hundred, and the page has to stay inside budgets for its paint, layout shift and the bytes it ships.
+hundred and search ninety, and the page has to stay inside budgets for its paint, layout shift and
+the bytes it ships. The performance score is reported rather than gated, since Postgres starting in
+the page counts as blocking time. The build those checks ran against is the one the deploy publishes.
 Nothing here needs the Postgres container, since the demo starts its own in the page.
 
 1. Install the demo's dependencies, and Chromium for the browser tests the first time.

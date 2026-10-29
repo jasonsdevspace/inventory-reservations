@@ -145,13 +145,25 @@ jobs:
             - name: Lighthouse audit
               run: npm run lighthouse
 
-            - name: Keep the report when something fails
+            - name: Keep the reports when something fails
               if: failure()
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
-                  name: playwright-report
-                  path: demo/playwright-report
+                  name: reports
+                  path: |
+                      demo/playwright-report
+                      demo/lighthouse-report
                   retention-days: 7
+
+            # The build the browser tests and the audit ran against is the
+            # one the deploy job publishes, so what was checked is what ships.
+            - name: Keep the build for the deploy
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: demo-dist
+                  path: demo/dist
+                  retention-days: 1
 
     # The browser demo, published to GitHub Pages at /inventory-reservations/
     # once everything above has passed on main. A merge that fails a check,
@@ -170,29 +182,12 @@ jobs:
         environment:
             name: github-pages
             url: ${{ steps.deployment.outputs.page_url }}
-        defaults:
-            run:
-                working-directory: demo
         steps:
-            - name: Checkout
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Fetch the build the demo job checked
+              uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
               with:
-                  persist-credentials: false
-
-            - name: Setup Node
-              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version: '24'
-                  cache: 'npm'
-                  cache-dependency-path: demo/package-lock.json
-
-            - name: Install dependencies
-              run: npm ci
-
-            - name: Build for the project site
-              run: npm run build
-              env:
-                  DEMO_BASE: /inventory-reservations/
+                  name: demo-dist
+                  path: demo/dist
 
             - name: Configure Pages
               uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

@@ -15,6 +15,9 @@ const url = `http://localhost:4173${base}`;
 export default defineConfig({
     testDir: 'e2e',
     fullyParallel: true,
+    // Each page boots Postgres on its main thread, so on the shared runner the
+    // tests take turns rather than competing for the CPU during the boot.
+    ...(process.env.CI ? { workers: 1 } : {}),
     forbidOnly: Boolean(process.env.CI),
     retries: process.env.CI ? 1 : 0,
     reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',

@@ -6,28 +6,25 @@
  * Runs after `npm run build`. The page is served by Vite's preview server
  * at the base path it was built for and audited for performance,
  * accessibility, best practices and search. Accessibility has to score a
- * hundred. Performance has to hold its score, and the page has to stay
- * inside budgets for the largest contentful paint, layout shift, and the
- * bytes of script, style and font it loads, so a regression fails the
- * pull request rather than reaching the site.
+ * hundred and search ninety, and the page has to stay inside budgets for
+ * the largest contentful paint, layout shift, and the bytes of script and
+ * style it loads, so a regression fails the pull request rather than
+ * reaching the site.
+ *
+ * The performance score is reported but not gated. Postgres starts in the
+ * page on the main thread as soon as it has painted, and Lighthouse counts
+ * those seconds as blocking time, which holds the score around seventy
+ * with every other metric in full and moves with the runner's speed. The
+ * paint and the bytes, which are in the page's hands, are gated instead.
  *
  * Lighthouse scores a page differently from one run to the next, more so
- * on a shared CI runner, so the page is audited several times and the
- * median of each score and metric is what the gate reads.
- *
- * Postgres starts in the page as soon as it has painted, on the main
- * thread, and Lighthouse counts the seconds that takes as blocking time.
- * Every other performance metric scores in full, and blocking time alone
- * holds the score at seventy one, so the gate sits just under that: it
- * catches a slower paint or a layout shift, and leaves the database's
- * startup to the page. Postgres itself arrives as WebAssembly and a data
- * file, which Lighthouse counts as neither script nor style, so the byte
- * budgets cover what the page ships to the first paint.
- *
- * GitHub Pages sets no custom response headers, so the header-only
- * audits Lighthouse counts under best practices, such as COOP, are not
- * in this demo's hands. Best practices is reported but not gated.
+ * on a shared runner, so the page is audited several times and the median
+ * of each score and metric is what the gate reads. The run at the median
+ * is written to lighthouse-report/, which CI keeps when something fails.
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
+
+import { chromium } from '@playwright/test';
 import { launch } from 'chrome-launcher';
 import lighthouse from 'lighthouse';
 import { preview } from 'vite';
@@ -36,17 +33,17 @@ const PORT = 4177;
 const ORIGIN = `http://localhost:${PORT}`;
 const RUNS = 3;
 
-const GATES = { accessibility: 1, performance: 0.65, seo: 0.9 };
+const GATES = { accessibility: 1, seo: 0.9 };
 
 // Milliseconds, a unitless shift score, then kilobytes. The page ships
 // React, the service's own store code and the Postgres client, which
 // together come to about 225 KB of script, so the budget leaves room for
-// a dependency bump and no more.
+// a dependency bump and no more. The page loads no font of its own.
 const TIMINGS = {
     'largest-contentful-paint': 2500,
     'cumulative-layout-shift': 0.1,
 };
-const SIZES = { script: 250, stylesheet: 60, font: 120 };
+const SIZES = { script: 250, stylesheet: 60 };
 
 const median = (values) => {
     const sorted = [...values].sort((a, b) => a - b);
@@ -93,10 +90,17 @@ const gate = async (chrome, path) => {
     const url = `${ORIGIN}${path}`;
     const runs = [];
     for (let run = 0; run < RUNS; run += 1) runs.push(await audit(chrome, url));
-    const over = (key, id) => median(runs.map((run) => run[key][id] ?? Infinity));
+    // A missing metric reads as over budget, and a missing score as zero, so a
+    // run that lost a category never passes a gate by its absence.
+    const over = (key, id, missing = Infinity) =>
+        median(runs.map((run) => run[key][id] ?? missing));
     const scores = Object.fromEntries(
-        Object.keys(runs[0].scores).map((name) => [name, over('scores', name)])
+        Object.keys(runs[0].scores).map((name) => [name, over('scores', name, 0)])
     );
+    // The run at the median performance score is the one worth keeping.
+    const kept = runs.find((run) => run.scores.performance === scores.performance) ?? runs[0];
+    mkdirSync('lighthouse-report', { recursive: true });
+    writeFileSync('lighthouse-report/report.json', JSON.stringify(kept.lhr));
     console.log(
         `${path}: ${Object.entries(scores)
             .map(([name, score]) => `${name} ${Math.round(score * 100)}`)
@@ -130,15 +134,18 @@ const gate = async (chrome, path) => {
 // The shared memory flag removes the usual cause, and a second attempt
 // covers the rest, so a flaky launch does not fail a pull request.
 const launchChrome = async (attempts = 3) => {
+    // The sandbox is off only on the runner, whose container needs it off.
     const chromeFlags = [
         '--headless=new',
-        '--no-sandbox',
+        ...(process.env.CI ? ['--no-sandbox'] : []),
         '--disable-dev-shm-usage',
         '--disable-gpu',
     ];
     for (let attempt = 1; ; attempt += 1) {
         try {
-            return await launch({ chromeFlags });
+            // The Chromium the browser tests installed, so both checks use one browser
+            // and a machine without Chrome can run this.
+            return await launch({ chromePath: chromium.executablePath(), chromeFlags });
         } catch (error) {
             if (attempt >= attempts) throw error;
             console.warn(`Chrome did not start (attempt ${attempt}): ${error.message}`);
