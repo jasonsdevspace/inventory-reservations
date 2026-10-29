@@ -101,8 +101,14 @@ jobs:
     # The browser demo runs the service's own store against Postgres in the
     # page. Its tests check the claims the page makes to a visitor, and the
     # build catches the store picking up anything a browser cannot load.
+    # The build is then visited in a real browser, desktop and phone, with
+    # an axe audit on each visit, and audited by Lighthouse with budgets.
+    # It is built for the project site's path, so what is checked is the
+    # page a visitor receives rather than a copy served from the root.
     demo:
         runs-on: ubuntu-latest
+        env:
+            DEMO_BASE: /inventory-reservations/
         defaults:
             run:
                 working-directory: demo
@@ -128,9 +134,29 @@ jobs:
             - name: Type-check and build
               run: npm run build
 
+            - name: Install Chromium
+              run: npx playwright install --with-deps chromium
+
+            - name: Browser tests
+              run: npm run e2e
+
+            # Accessibility has to score a hundred, and the page has to stay
+            # inside its budgets. Runs against the build the browser tests used.
+            - name: Lighthouse audit
+              run: npm run lighthouse
+
+            - name: Keep the report when something fails
+              if: failure()
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: playwright-report
+                  path: demo/playwright-report
+                  retention-days: 7
+
     # The browser demo, published to GitHub Pages at /inventory-reservations/
     # once everything above has passed on main. A merge that fails a check,
-    # including the tests against Postgres, is never deployed.
+    # including the tests against Postgres, the browser tests and the
+    # Lighthouse audit, is never deployed.
     deploy:
         needs: [verify, demo]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
