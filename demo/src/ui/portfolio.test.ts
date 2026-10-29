@@ -51,7 +51,8 @@ describe('whose demo this is', () => {
 
 describe('the theme the portfolio saved', () => {
     const page = indexHtml;
-    const script = /<script>([\s\S]*?)<\/script>/.exec(page)?.[1] ?? '';
+    // The one inline script in the head, by its position rather than a pattern.
+    const script = page.slice(page.indexOf('<script>') + 8, page.indexOf('</script>'));
 
     it('is read from the shared key before the first paint, with both values', () => {
         expect(page.indexOf('<script>')).toBeLessThan(page.indexOf('</head>'));
