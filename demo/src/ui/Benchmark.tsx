@@ -1,5 +1,6 @@
 import results from '../../../docs/benchmarks/results.json';
 import { LineChart, type Series } from './LineChart.js';
+import { REPO_URL } from './Portfolio.js';
 
 /*
  * The contention benchmark's recorded results, charted. The data is the
@@ -18,7 +19,6 @@ interface Scenario {
     readonly gaveUp: number;
 }
 
-const REPO = 'https://github.com/jasonsdevspace/inventory-reservations';
 const scenarios = results.scenarios as readonly Scenario[];
 const levels = [...new Set(scenarios.map((s) => s.concurrency))].sort((a, b) => a - b);
 
@@ -124,9 +124,9 @@ export const Benchmark = () => (
 
         <p className="hint footnote">
             The full method is in the{' '}
-            <a href={`${REPO}/blob/main/docs/benchmarks/results.md`}>benchmark report</a>, and the
-            choice it supports is argued in{' '}
-            <a href={`${REPO}/blob/main/docs/decisions/0002-row-lock-over-serializable.md`}>
+            <a href={`${REPO_URL}/blob/main/docs/benchmarks/results.md`}>benchmark report</a>, and
+            the choice it supports is argued in{' '}
+            <a href={`${REPO_URL}/blob/main/docs/decisions/0002-row-lock-over-serializable.md`}>
                 decision record 2
             </a>
             .
