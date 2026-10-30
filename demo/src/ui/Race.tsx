@@ -59,9 +59,9 @@ export const Race = () => {
         <section className="race card" id="race" tabIndex={-1} aria-labelledby="race-title">
             <h2 id="race-title">Two buyers, one unit</h2>
             <p className="hint">
-                The whole service exists for this moment. Pick a strategy and step through what each
-                buyer's transaction does. Every decision is made by the service's own code, from
-                exactly what that buyer read.
+                The whole service exists for this moment. Press a strategy and step through what
+                each buyer's transaction does. Every decision is made by the service's own code,
+                from exactly what that buyer read.
             </p>
 
             <div className="tabs" role="group" aria-label="Concurrency strategy">

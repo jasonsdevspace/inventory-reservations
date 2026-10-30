@@ -120,8 +120,8 @@ export const App = () => {
                             </p>
                         ) : (
                             <p role="alert">
-                                Postgres could not start in this browser: {boot.message}. The race
-                                above and the benchmark below still work.
+                                Postgres could not start in this browser: {boot.message}. "Two
+                                buyers, one unit" and "What each protection costs" still work.
                             </p>
                         )}
                     </section>

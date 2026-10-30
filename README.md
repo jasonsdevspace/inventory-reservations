@@ -304,7 +304,7 @@ curl localhost:8080/inventory/DEMO-1 \
 </details>
 
 <details>
-<summary><b>6. Hold stock at checkout</b>: a hold paid for in time always becomes an order</summary>
+<summary><b>6. Hold stock at checkout</b>: a hold paid before it expires always becomes an order</summary>
 
 Set the last unit of `DEMO-SCARCE` aside while a shopper pays. It stops being available straight
 away, and the hold expires on its own after 15 minutes if nobody pays.
@@ -469,7 +469,7 @@ never leave one without the other.
 <summary><b>Checkout holds</b>: stock set aside for a few minutes, freed the moment it expires</summary>
 
 An order is a commitment, so it keeps its stock until it ships or is canceled. A checkout that has
-not finished is different, because the shopper may simply leave. Its stock is set aside by a hold,
+not finished is different, because the shopper might leave. Its stock is set aside by a hold,
 which runs out.
 
 - Each merchant sets how long its holds last, 15 minutes by default. An extension gives a full
@@ -504,7 +504,7 @@ The reasoning, and the options it rules out, are in
 
 - `/health` and `/ready` are separate, so a database outage takes instances out of rotation
   without restarting them. They recover on their own when it returns.
-- Each API key may make 600 requests a minute. Past that it gets a 429 with `Retry-After`, and
+- Each API key can make 600 requests a minute. Past that it gets a 429 with `Retry-After`, and
   the request is refused before it reaches the database.
 - Every database call has a timeout on both sides, so a stalled database produces fast errors
   rather than hung requests.

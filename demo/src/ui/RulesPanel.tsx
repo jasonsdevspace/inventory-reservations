@@ -144,6 +144,7 @@ export const RulesPanel = ({
                                     .run(demo, merchantId)
                                     .then((report) => answer(attempt.title, report))
                             }
+                            aria-label={`Try it: ${attempt.title}`}
                         >
                             Try it
                         </button>
