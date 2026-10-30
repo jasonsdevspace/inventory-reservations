@@ -32,7 +32,8 @@ that compensates it. Available stock is worked out from the two on every read an
 
 ## Decision
 
-Option C, following the model Adobe Commerce documents publicly for Multi-Source Inventory.
+Option C, following the multi-source inventory model a widely used commerce platform documents
+publicly.
 
 - **An order reserves, a shipment confirms.** Placing an order commits stock without moving it.
   Shipping lowers physical stock and adds the entry that closes the commitment, so available stock
