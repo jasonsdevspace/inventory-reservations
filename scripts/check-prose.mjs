@@ -19,7 +19,15 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'coverage', 'dist']);
+const SKIP_DIRS = new Set([
+    'node_modules',
+    '.git',
+    'coverage',
+    'dist',
+    'playwright-report',
+    'lighthouse-report',
+    'test-results',
+]);
 const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql', '.html']);
 
 /** Files with no extension that still carry comments worth checking. */
@@ -95,18 +103,19 @@ const proseOf = (source) =>
         }));
 
 /**
- * The page with every script block blanked, line breaks kept, so the line
- * numbers still match. Found by scanning for the tags rather than with a
- * pattern, since a pattern over HTML is easy to get subtly wrong.
+ * The page with every block of the named kind blanked, line breaks kept,
+ * so the line numbers still match. Found by scanning for the tags rather
+ * than with a pattern, since a pattern over HTML is easy to get subtly
+ * wrong.
  */
-const withoutScripts = (source) => {
+const withoutBlocks = (source, tag) => {
     const lower = source.toLowerCase();
     let out = '';
     let at = 0;
     for (;;) {
-        const open = lower.indexOf('<script', at);
+        const open = lower.indexOf(`<${tag}`, at);
         if (open === -1) return out + source.slice(at);
-        let close = lower.indexOf('</script', open);
+        let close = lower.indexOf(`</${tag}`, open);
         if (close === -1) close = source.length;
         const end =
             close === source.length ? close : source.indexOf('>', close) + 1 || source.length;
@@ -114,6 +123,9 @@ const withoutScripts = (source) => {
         at = end;
     }
 };
+
+/** A page with its scripts and its styles blanked, which are code, not prose. */
+const withoutScripts = (source) => withoutBlocks(withoutBlocks(source, 'script'), 'style');
 
 /**
  * The text of an HTML page, with its scripts and its tags removed, line by

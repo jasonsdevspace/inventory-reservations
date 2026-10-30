@@ -15,8 +15,12 @@ export const themeScript = (): Plugin => ({
     transformIndexHtml: {
         order: 'pre',
         handler: (html) => {
+            if (!html.includes(PLACEHOLDER)) {
+                throw new Error(`a page has no place for the theme script: ${PLACEHOLDER}`);
+            }
             const script = readFileSync(new URL('../theme.js', import.meta.url), 'utf8');
-            return html.replace(PLACEHOLDER, `<script>\n${script}</script>`);
+            // A function, so nothing in the script reads as a replacement pattern.
+            return html.replace(PLACEHOLDER, () => `<script>\n${script}</script>`);
         },
     },
 });

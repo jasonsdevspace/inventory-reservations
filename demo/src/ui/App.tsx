@@ -17,33 +17,53 @@ type Boot =
  */
 let booting: Promise<DemoDatabase> | undefined;
 
+/** How long a landed section is held in view while panels above it settle. */
+const SETTLE_MS = 3000;
+
 /**
  * A link from the explainer names a section. The browser scrolls to it on
  * arrival when it is there, and does nothing when it only renders once
  * Postgres is up. So a section that was missing on arrival is scrolled to
- * and focused when it appears, unless the reader has scrolled since, in
- * which case the page is theirs and stays where they put it.
+ * and focused when it appears, and held there while the panels above it
+ * finish arriving, unless the reader has scrolled, pressed or clicked
+ * since, in which case the page is theirs and stays where they put it.
  */
 const useLandOnSection = (ready: boolean) => {
     const pending = useRef(false);
-    const moved = useRef(false);
+    const taken = useRef(false);
     useEffect(() => {
         const id = window.location.hash.slice(1);
         if (!id) return undefined;
         pending.current = document.getElementById(id) === null;
-        const onScroll = () => {
-            moved.current = true;
+        const takeOver = () => {
+            taken.current = true;
         };
-        window.addEventListener('scroll', onScroll, { passive: true, once: true });
-        return () => window.removeEventListener('scroll', onScroll);
+        const signals = ['scroll', 'wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+        for (const signal of signals) {
+            window.addEventListener(signal, takeOver, { passive: true, once: true });
+        }
+        return () => {
+            for (const signal of signals) window.removeEventListener(signal, takeOver);
+        };
     }, []);
     useEffect(() => {
-        if (!ready || !pending.current || moved.current) return;
+        if (!ready || !pending.current || taken.current) return undefined;
         const target = document.getElementById(window.location.hash.slice(1));
-        if (!target) return;
+        if (!target) return undefined;
         pending.current = false;
         target.scrollIntoView();
-        target.focus();
+        target.focus({ preventScroll: true });
+        // A panel above may still be on its way. Until it has settled, each change
+        // in the page's height puts the section back in view.
+        const hold = new ResizeObserver(() => {
+            if (!taken.current) target.scrollIntoView();
+        });
+        hold.observe(document.body);
+        const release = window.setTimeout(() => hold.disconnect(), SETTLE_MS);
+        return () => {
+            hold.disconnect();
+            window.clearTimeout(release);
+        };
     }, [ready]);
 };
 

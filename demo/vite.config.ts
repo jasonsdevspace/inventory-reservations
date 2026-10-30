@@ -17,8 +17,8 @@ import { themeScript } from './src/theme-plugin.js';
  * project site from /<repository>/, and local development from /.
  *
  * The explainer at about/ is a second page in the build. It carries no
- * script of its own, and the preload polyfill is left out so the two
- * pages share no chunk and the demo's page stays as it was.
+ * script of its own, so the two pages share no chunk and the demo's page
+ * is built as it was.
  */
 export default defineConfig({
     base: process.env.DEMO_BASE ?? '/',
@@ -27,7 +27,6 @@ export default defineConfig({
     optimizeDeps: { exclude: ['@electric-sql/pglite'] },
     build: {
         target: 'es2023',
-        modulePreload: { polyfill: false },
         rollupOptions: {
             input: {
                 main: fileURLToPath(new URL('./index.html', import.meta.url)),
