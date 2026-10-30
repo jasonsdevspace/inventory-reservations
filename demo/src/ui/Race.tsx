@@ -56,7 +56,7 @@ export const Race = () => {
     if (!step) return null;
 
     return (
-        <section className="race card" aria-labelledby="race-title">
+        <section className="race card" id="race" tabIndex={-1} aria-labelledby="race-title">
             <h2 id="race-title">Two buyers, one unit</h2>
             <p className="hint">
                 The whole service exists for this moment. Pick a strategy and step through what each

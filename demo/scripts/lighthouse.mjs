@@ -162,6 +162,7 @@ try {
     const chrome = await launchChrome();
     try {
         failures.push(...(await gate(chrome, server.config.base)));
+        failures.push(...(await gate(chrome, `${server.config.base}about/`)));
     } finally {
         chrome.kill();
     }

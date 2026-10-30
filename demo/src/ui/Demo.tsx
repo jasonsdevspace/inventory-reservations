@@ -194,7 +194,7 @@ export const Demo = ({ demo }: { readonly demo: DemoDatabase }) => {
     };
 
     return (
-        <section className="live" aria-label="Run the service">
+        <section className="live" id="live" tabIndex={-1} aria-label="Run the service">
             <header className="live-intro">
                 <h2>Run the service</h2>
                 <p className="hint">

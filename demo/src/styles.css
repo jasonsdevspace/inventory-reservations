@@ -661,3 +661,130 @@ details summary {
     border-bottom: 1px solid var(--line);
     white-space: nowrap;
 }
+
+/*
+ * The explainer at about/: prose at the lede's reading measure, in the
+ * page column, with the demo's own steps for type and space.
+ */
+.skip {
+    position: absolute;
+    left: 16px;
+    top: -160px;
+    padding: 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    z-index: 10;
+}
+
+.skip:focus-visible {
+    top: 16px;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.about {
+    max-width: 70ch;
+}
+
+.about-back {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+}
+
+.about-pitch {
+    margin: 0 0 16px;
+}
+
+.about section {
+    margin-top: 32px;
+    padding-top: 32px;
+    border-top: 1px solid var(--line);
+}
+
+.about h2 {
+    margin: 0 0 12px;
+}
+
+.about h3 {
+    margin: 24px 0 4px;
+}
+
+.about p {
+    margin: 0 0 16px;
+}
+
+.about p:last-child {
+    margin-bottom: 0;
+}
+
+.eyebrow {
+    margin: 0 0 4px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* The steps stack, one under the next, with the arrow between them saying so. */
+.flow {
+    list-style: none;
+    margin: 16px 0;
+    padding: 0;
+    display: grid;
+    gap: 24px;
+}
+
+.flow li {
+    position: relative;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+.flow li + li::before {
+    content: '\2193' / '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    color: var(--muted);
+}
+
+.flow strong {
+    display: block;
+    font-weight: 500;
+}
+
+.flow-note {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+}
+
+/* The demo's button, as a link, for "open the demo". */
+.tour-try {
+    display: inline-block;
+    padding: 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.tour-try:hover,
+.tour-try:focus-visible {
+    border-color: var(--accent);
+}
+
+/* A link inside running text is told apart by more than its color. */
+.about p a,
+.boot a {
+    text-decoration: underline;
+}

@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { bootDemoDatabase, type DemoDatabase } from '../db/boot.js';
 import { Benchmark } from './Benchmark.js';
 import { Demo } from './Demo.js';
-import { DemoFooter, PortfolioStrip, REPO_URL } from './Portfolio.js';
+import { ABOUT_URL, DemoFooter, PortfolioStrip, REPO_URL } from './Portfolio.js';
 import { Race } from './Race.js';
 
 type Boot =
@@ -18,11 +18,42 @@ type Boot =
 let booting: Promise<DemoDatabase> | undefined;
 
 /**
+ * A link from the explainer names a section. The browser scrolls to it on
+ * arrival when it is there, and does nothing when it only renders once
+ * Postgres is up. So a section that was missing on arrival is scrolled to
+ * and focused when it appears, unless the reader has scrolled since, in
+ * which case the page is theirs and stays where they put it.
+ */
+const useLandOnSection = (ready: boolean) => {
+    const pending = useRef(false);
+    const moved = useRef(false);
+    useEffect(() => {
+        const id = window.location.hash.slice(1);
+        if (!id) return undefined;
+        pending.current = document.getElementById(id) === null;
+        const onScroll = () => {
+            moved.current = true;
+        };
+        window.addEventListener('scroll', onScroll, { passive: true, once: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, []);
+    useEffect(() => {
+        if (!ready || !pending.current || moved.current) return;
+        const target = document.getElementById(window.location.hash.slice(1));
+        if (!target) return;
+        pending.current = false;
+        target.scrollIntoView();
+        target.focus();
+    }, [ready]);
+};
+
+/**
  * The page. The race and the benchmark need no database, so they render at
  * once, and only the live service waits for Postgres to start.
  */
 export const App = () => {
     const [boot, setBoot] = useState<Boot>({ state: 'starting' });
+    useLandOnSection(boot.state === 'ready');
 
     useEffect(() => {
         booting ??= bootDemoDatabase();
@@ -59,16 +90,18 @@ export const App = () => {
                 {boot.state === 'ready' ? (
                     <Demo demo={boot.demo} />
                 ) : (
-                    <section className="card boot" aria-live="polite">
+                    <section className="card boot" id="live" tabIndex={-1} aria-live="polite">
                         <h2>Run the service</h2>
                         {boot.state === 'starting' ? (
                             <p className="hint">
                                 Starting Postgres in your browser and applying the service's schema.
-                                This downloads about 5 MB the first time.
+                                This downloads about 5 MB the first time. While it starts,{' '}
+                                <a href={ABOUT_URL}>read how it works</a>.
                             </p>
                         ) : (
                             <p role="alert">
-                                Postgres could not start in this browser: {boot.message}
+                                Postgres could not start in this browser: {boot.message}. The race
+                                above and the benchmark below still work.
                             </p>
                         )}
                     </section>

@@ -44,6 +44,7 @@ test('arrives on the page, says whose demo it is, and has no audit findings', as
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('inventory-reservations');
     const strip = page.getByRole('navigation', { name: 'Portfolio' });
     await expect(strip.getByRole('link', { name: 'A demo by Jason Poteet' })).toBeVisible();
+    await expect(strip.getByRole('link', { name: 'How it works' })).toBeVisible();
     await expect(strip.getByRole('link', { name: 'Source on GitHub' })).toBeVisible();
     await ready(page);
     await audit(page);
@@ -123,4 +124,36 @@ test('places an order for Acme, switches to Globex, and still has no audit findi
     await live.getByRole('button', { name: 'Acme Supply Co' }).click();
     await expect(product(/^DEMO-1 4 available of 5$/)).toBeVisible();
     await expect(ledger.getByRole('row', { name: /order-1/ })).toBeVisible();
+});
+
+test('the explainer reads without the database, audits clean, and lands a reader on a late section', async ({
+    page,
+}) => {
+    await page.goto('./about/');
+    await expect(page).toHaveTitle('How inventory-reservations works');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+        'How inventory-reservations works'
+    );
+    await expect(page.getByRole('navigation', { name: 'Portfolio' })).toContainText('How it works');
+    const overflow = await page.evaluate<number>(
+        'document.documentElement.scrollWidth - window.innerWidth'
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+    await audit(page);
+
+    // The skip link is the first stop, and lands on the content.
+    await page.keyboard.press('Tab');
+    const skip = page.getByRole('link', { name: 'Skip to content' });
+    await expect(skip).toBeFocused();
+    await skip.press('Enter');
+    await expect(page.locator('#main-content')).toBeFocused();
+
+    // A story's link names a section that only exists once Postgres is up. The
+    // page lands there when it appears, rather than leaving the reader at the top.
+    await page.getByRole('link', { name: /Press "Edit a ledger entry"/ }).click();
+    await expect(page).toHaveURL(/#rules$/);
+    await ready(page);
+    const rules = page.getByRole('region', { name: 'Try to break it' });
+    await expect(rules).toBeInViewport();
+    await expect(rules).toBeFocused();
 });
