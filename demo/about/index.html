@@ -107,7 +107,7 @@
                         first before it decides. The gray box under each step is the exact
                         instruction sent to the database, and you can ignore it.
                         <a href="../#race"
-                            >Press "Next step" to the end with "No protection", then choose "Row
+                            >Press "Next step" to the end with "No protection", then press "Row
                             lock" and do it again.</a
                         >
                     </p>
@@ -139,7 +139,10 @@
                         owner too. The only way to correct the history is to add a line that says
                         so. In the history a negative line takes a unit away and a positive one
                         gives it back.
-                        <a href="../#rules">Press "Edit a ledger entry" under "Try to break it".</a>
+                        <a href="../#rules"
+                            >Under "Try to break it", find "Edit a ledger entry as the service" and
+                            press "Try it", then do the same for "Edit it as the database owner".</a
+                        >
                     </p>
 
                     <h3>One store seeing another's stock</h3>
@@ -149,7 +152,10 @@
                         database. Here the API key decides which store is asking, and the database
                         checks again on every row, so a query that forgets gets nothing, not
                         everything.
-                        <a href="../#rules">Press "Read stock without saying whose".</a>
+                        <a href="../#rules"
+                            >Under "Try to break it", find "Read stock without saying whose" and
+                            press "Try it".</a
+                        >
                     </p>
 
                     <h3>The mistake nobody noticed</h3>
@@ -159,11 +165,14 @@
                         reconciliation job checks every history against the rules a correct one
                         keeps and reports what is wrong. It fixes nothing, because an automatic fix
                         would guess, so a person records the correction instead.
-                        <a href="../#rules">Write a bad entry, run reconciliation, then fix it.</a>
+                        <a href="../#rules"
+                            >Press "Write a bad entry", then "Run reconciliation", then "Fix it with
+                            a compensating entry".</a
+                        >
                     </p>
 
                     <p>
-                        The guided part of the demo is the race at the top. Pick a strategy and
+                        The guided part of the demo is the race at the top. Press a strategy, then
                         press "Next step" to watch each buyer's turn.
                     </p>
                 </section>

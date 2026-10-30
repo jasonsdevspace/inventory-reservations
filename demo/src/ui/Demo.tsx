@@ -49,11 +49,11 @@ const because = (rejection: Rejection): string => {
         case 'hold_exists':
             return 'that hold id has been used before';
         case 'hold_ended':
-            return `the hold already ended with ${rejection.reason}`;
+            return 'the hold already ended';
         case 'hold_expired':
             return `the hold expired, and ${rejection.available} can be ordered directly instead`;
         case 'hold_at_limit':
-            return 'the hold is already as long as a hold may last';
+            return 'the hold is already as long as a hold can last';
     }
 };
 
@@ -84,10 +84,29 @@ const describe = (action: string, outcome: Outcome): Report => {
             };
         }
         case 'contention':
+            return {
+                tone: 'refused',
+                text: `${action} was refused: the store gave up after retrying. Try again.`,
+                detail: outcome,
+            };
         case 'in_flight':
+            return {
+                tone: 'refused',
+                text: `${action} was refused: the same request is still being handled. Wait for it to finish.`,
+                detail: outcome,
+            };
         case 'key_reused':
+            return {
+                tone: 'refused',
+                text: `${action} was refused: that receipt was used for a different order. Place a new order instead.`,
+                detail: outcome,
+            };
         case 'unknown_sku':
-            return { tone: 'refused', text: `${action}: ${outcome.kind}.`, detail: outcome };
+            return {
+                tone: 'refused',
+                text: `${action} was refused: no such product for this merchant.`,
+                detail: outcome,
+            };
     }
 };
 

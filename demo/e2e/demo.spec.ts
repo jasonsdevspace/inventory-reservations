@@ -150,7 +150,7 @@ test('the explainer reads without the database, audits clean, and lands a reader
 
     // A story's link names a section that only exists once Postgres is up. The
     // page lands there when it appears, rather than leaving the reader at the top.
-    await page.getByRole('link', { name: /Press "Edit a ledger entry"/ }).click();
+    await page.getByRole('link', { name: /find "Edit a ledger entry as the service"/ }).click();
     await expect(page).toHaveURL(/#rules$/);
     await ready(page);
     const rules = page.getByRole('region', { name: 'Try to break it' });
