@@ -2,9 +2,12 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
+import aboutHtml from '../../about/index.html?raw';
 import indexHtml from '../../index.html?raw';
+import themeScript from '../../theme.js?raw';
 import { App } from './App.js';
 import {
+    ABOUT_URL,
     GITHUB_PROFILE_URL,
     LICENSE_URL,
     PORTFOLIO_URL,
@@ -28,6 +31,7 @@ describe('whose demo this is', () => {
         );
         expect(links).toEqual([
             [PORTFOLIO_WORK_URL, 'A demo by Jason Poteet'],
+            [ABOUT_URL, 'How it works'],
             [REPO_URL, 'Source on GitHub'],
         ]);
         expect(html.indexOf('<nav class="portfolio"')).toBeLessThan(html.indexOf('<main>'));
@@ -45,17 +49,26 @@ describe('whose demo this is', () => {
         const footer = /<footer class="colophon">([\s\S]*?)<\/footer>/.exec(html)?.[1] ?? '';
         expect(html.indexOf('<footer class="colophon"')).toBeGreaterThan(html.indexOf('</main>'));
         const hrefs = [...footer.matchAll(/<a href="([^"]+)">/g)].map((m) => m[1]);
-        expect(hrefs).toEqual([PORTFOLIO_URL, REPO_URL, GITHUB_PROFILE_URL, LICENSE_URL]);
+        expect(hrefs).toEqual([
+            PORTFOLIO_URL,
+            ABOUT_URL,
+            REPO_URL,
+            GITHUB_PROFILE_URL,
+            LICENSE_URL,
+        ]);
     });
 });
 
 describe('the theme the portfolio saved', () => {
-    const page = indexHtml;
-    // The one inline script in the head, by its position rather than a pattern.
-    const script = page.slice(page.indexOf('<script>') + 8, page.indexOf('</script>'));
+    const script = themeScript;
+    const pages = [indexHtml, aboutHtml];
 
     it('is read from the shared key before the first paint, with both values', () => {
-        expect(page.indexOf('<script>')).toBeLessThan(page.indexOf('</head>'));
+        // One script, put into the head of both pages by the build.
+        for (const page of pages) {
+            expect(page.indexOf('<!-- theme-script -->')).toBeGreaterThan(-1);
+            expect(page.indexOf('<!-- theme-script -->')).toBeLessThan(page.indexOf('</head>'));
+        }
         expect(script).toContain("localStorage.getItem('theme')");
         expect(script).toContain("'dark'");
         expect(script).toContain("'light'");

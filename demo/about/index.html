@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <!-- theme-script -->
+        <meta
+            name="description"
+            content="What the inventory-reservations demo shows, in plain words: what happens when an order comes in, what usually goes wrong in a store's stock, and what to try."
+        />
+        <title>How inventory-reservations works</title>
+        <link rel="stylesheet" href="/src/styles.css" />
+    </head>
+    <body>
+        <a class="skip" href="#main-content">Skip to content</a>
+        <nav class="portfolio" aria-label="Portfolio">
+            <div class="portfolio-row">
+                <a href="https://jasonsdevspace.com/#work">A demo by Jason Poteet</a>
+                <a href="./" aria-current="page">How it works</a>
+                <a href="https://github.com/jasonsdevspace/inventory-reservations"
+                    >Source on GitHub</a
+                >
+            </div>
+        </nav>
+        <main id="main-content" tabindex="-1">
+            <div class="about">
+                <p class="about-back"><a href="../">inventory-reservations</a></p>
+                <h1>How inventory-reservations works</h1>
+                <p class="about-pitch">
+                    inventory-reservations is a small inventory service with one job: when two
+                    customers reach for the last unit of a product at the same moment, exactly one
+                    of them gets it. Stock is kept as a history of every promise rather than a
+                    number that gets changed, so when the warehouse count disagrees there is
+                    something to compare it with. It is built for three people: the store that must
+                    never sell what it does not have, the operator who has to explain a stock level
+                    after the fact, and the reviewer with two minutes who wants to know whether the
+                    person who built it understands the problem. The demo runs the service's own
+                    code against a real Postgres database inside your browser, with the same tables,
+                    roles and permissions as a deployment. It takes a few seconds to start and says
+                    so. Nothing to install, and nothing you do in it leaves your machine.
+                </p>
+                <p><a class="tour-try" href="../">Open the demo</a></p>
+
+                <section aria-labelledby="order">
+                    <p class="eyebrow" aria-hidden="true">01</p>
+                    <h2 id="order">What happens when an order comes in</h2>
+                    <ol class="flow">
+                        <li>
+                            <strong>The order names a product and a quantity.</strong>
+                            <span class="flow-note"
+                                >It can also carry a receipt, a code the sender picks, so the same
+                                order can be sent twice without being placed twice.</span
+                            >
+                        </li>
+                        <li>
+                            <strong>It waits its turn.</strong>
+                            <span class="flow-note"
+                                >Orders for the same product line up and go one at a time. Each
+                                reads the shelf after the order ahead of it has finished, so nobody
+                                decides from a stale picture.</span
+                            >
+                        </li>
+                        <li>
+                            <strong>The service adds up what is really available.</strong>
+                            <span class="flow-note"
+                                >Stock on hand is one number that changes only when goods ship.
+                                Everything promised to orders or set aside in checkouts is a line in
+                                the history, and what is available is worked out fresh on every
+                                read, never stored.</span
+                            >
+                        </li>
+                        <li>
+                            <strong>It says yes or no.</strong>
+                            <span class="flow-note"
+                                >Yes adds one line to the history for the order. No comes back with
+                                how many were actually available. If the order carried a receipt,
+                                the receipt is saved in the same step, so a crash cannot leave one
+                                without the other.</span
+                            >
+                        </li>
+                        <li>
+                            <strong>Later, the order ships or is canceled.</strong>
+                            <span class="flow-note"
+                                >Shipping lowers the count on hand and adds the line that closes the
+                                order. Canceling adds that line and leaves the count alone. No line
+                                is ever edited or removed.</span
+                            >
+                        </li>
+                    </ol>
+                </section>
+
+                <section aria-labelledby="wrong">
+                    <p class="eyebrow" aria-hidden="true">02</p>
+                    <h2 id="wrong">What usually goes wrong, and does not here</h2>
+                    <p>
+                        Each of these is a mistake real stores make. Each has a test behind it in
+                        the repo. Each link opens the demo at the right place, and your browser's
+                        back button brings you here. In the demo, a refusal is the rule working,
+                        which is why it is shown as a success.
+                    </p>
+
+                    <h3>Two customers, one unit</h3>
+                    <p>
+                        Both read one available, both are told yes, and the store has sold something
+                        it does not have. The history records that faithfully and does nothing to
+                        stop it. Here orders for a product take turns, and the second one reads the
+                        first before it decides. The gray box under each step is the exact
+                        instruction sent to the database, and you can ignore it.
+                        <a href="../#race"
+                            >Press "Next step" to the end with "No protection", then choose "Row
+                            lock" and do it again.</a
+                        >
+                    </p>
+
+                    <h3>A second try with the same receipt</h3>
+                    <p>
+                        A customer's connection drops after they press buy, the app retries, and one
+                        purchase becomes two orders. Here every order can carry a receipt, and a
+                        second try with the same receipt gets the first answer back and places
+                        nothing new. The receipt is kept long enough to outlast every retry.
+                        <a href="../#live">Place an order, then press "Retry the last order".</a>
+                    </p>
+
+                    <h3>The cart that walked away</h3>
+                    <p>
+                        A shopper puts the last unit in a cart, wanders off, and nobody else can buy
+                        it. Here a checkout hold sets stock aside for a fixed time, fifteen minutes
+                        in the service and one minute in the demo so you can watch it. The moment it
+                        runs out the unit is back on sale, and a cleanup job writes down afterward
+                        how the hold ended.
+                        <a href="../#live">Press "Hold for checkout" and wait a minute.</a>
+                    </p>
+
+                    <h3>The number somebody edited</h3>
+                    <p>
+                        A quantity column can be changed by a bug or a well-meaning fix, and
+                        afterward nobody can say why. Here the service connects as a role that
+                        cannot change or delete anything, and the database refuses an edit from its
+                        owner too. The only way to correct the history is to add a line that says
+                        so. In the history a negative line takes a unit away and a positive one
+                        gives it back.
+                        <a href="../#rules">Press "Edit a ledger entry" under "Try to break it".</a>
+                    </p>
+
+                    <h3>One store seeing another's stock</h3>
+                    <p>
+                        Many stores share one database, and a query that forgets its filter shows
+                        everyone's rows. In the demo, Acme and Globex are two stores sharing one
+                        database. Here the API key decides which store is asking, and the database
+                        checks again on every row, so a query that forgets gets nothing, not
+                        everything.
+                        <a href="../#rules">Press "Read stock without saying whose".</a>
+                    </p>
+
+                    <h3>The mistake nobody noticed</h3>
+                    <p>
+                        A bad entry in the history makes a product look more available than it is,
+                        until a customer is told yes for a unit that does not exist. Here a
+                        reconciliation job checks every history against the rules a correct one
+                        keeps and reports what is wrong. It fixes nothing, because an automatic fix
+                        would guess, so a person records the correction instead.
+                        <a href="../#rules">Write a bad entry, run reconciliation, then fix it.</a>
+                    </p>
+
+                    <p>
+                        The guided part of the demo is the race at the top. Pick a strategy and
+                        press "Next step" to watch each buyer's turn.
+                    </p>
+                </section>
+
+                <section aria-labelledby="hood">
+                    <p class="eyebrow" aria-hidden="true">03</p>
+                    <h2 id="hood">Under the hood, briefly</h2>
+                    <p>The rest is for engineers.</p>
+                    <p>
+                        The service is TypeScript on Node with Postgres behind it, and it ships as a
+                        distroless container with health and readiness probes and scheduled jobs
+                        that run from the same image. The ledger is append-only, enforced by a
+                        database trigger, available stock is derived on every read, and orders for
+                        one product queue on a row lock. That choice was measured rather than
+                        assumed: with 32 buyers on one product, row locking held about 700 orders a
+                        second with the slowest 1% at 56 ms and none refused, where serializable
+                        transactions fell to about 320 a second with the slowest 1% at 584 ms and
+                        some refused once retries ran out.
+                        <a href="../#benchmark">The demo charts those numbers.</a> Tenancy is
+                        enforced twice, by the API key and by row level security, and the service
+                        runs as a role that cannot delete anything. Every choice with a real
+                        alternative is a decision record.
+                    </p>
+                    <p>
+                        The
+                        <a href="https://github.com/jasonsdevspace/inventory-reservations"
+                            >README</a
+                        >
+                        is the case study, and the
+                        <a
+                            href="https://github.com/jasonsdevspace/inventory-reservations/tree/main/docs/decisions"
+                            >decision records</a
+                        >
+                        are beside it.
+                    </p>
+                </section>
+
+                <section aria-labelledby="who">
+                    <p class="eyebrow" aria-hidden="true">04</p>
+                    <h2 id="who">Who made it</h2>
+                    <p>
+                        Jason Poteet, as a portfolio project. If this is the kind of work you are
+                        hiring for,
+                        <a href="https://jasonsdevspace.com/#contact">get in touch</a>.
+                    </p>
+                </section>
+            </div>
+        </main>
+        <footer class="colophon">
+            <p>
+                inventory-reservations is a portfolio project by
+                <a href="https://jasonsdevspace.com/">Jason Poteet</a>.
+                <a href="./" aria-current="page">How it works</a>, in plain words. The
+                <a href="https://github.com/jasonsdevspace/inventory-reservations">source</a> and
+                <a href="https://github.com/jasonsdevspace">more work</a> are on GitHub, under the
+                <a href="https://github.com/jasonsdevspace/inventory-reservations/blob/main/LICENSE"
+                    >MIT license</a
+                >.
+            </p>
+        </footer>
+    </body>
+</html>

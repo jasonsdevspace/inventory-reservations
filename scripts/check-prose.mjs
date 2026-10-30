@@ -19,8 +19,16 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', 'coverage', 'dist']);
-const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql']);
+const SKIP_DIRS = new Set([
+    'node_modules',
+    '.git',
+    'coverage',
+    'dist',
+    'playwright-report',
+    'lighthouse-report',
+    'test-results',
+]);
+const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql', '.html']);
 
 /** Files with no extension that still carry comments worth checking. */
 const SCANNED_NAMES = new Set(['Dockerfile']);
@@ -94,6 +102,42 @@ const proseOf = (source) =>
             text: line.replace(/`[^`]*`/g, '').replace(/&[a-z]+;/gi, ''),
         }));
 
+/**
+ * The page with every block of the named kind blanked, line breaks kept,
+ * so the line numbers still match. Found by scanning for the tags rather
+ * than with a pattern, since a pattern over HTML is easy to get subtly
+ * wrong.
+ */
+const withoutBlocks = (source, tag) => {
+    const lower = source.toLowerCase();
+    let out = '';
+    let at = 0;
+    for (;;) {
+        const open = lower.indexOf(`<${tag}`, at);
+        if (open === -1) return out + source.slice(at);
+        let close = lower.indexOf(`</${tag}`, open);
+        if (close === -1) close = source.length;
+        const end =
+            close === source.length ? close : source.indexOf('>', close) + 1 || source.length;
+        out += source.slice(at, open) + source.slice(open, end).replace(/[^\n]/g, '');
+        at = end;
+    }
+};
+
+/** A page with its scripts and its styles blanked, which are code, not prose. */
+const withoutScripts = (source) => withoutBlocks(withoutBlocks(source, 'script'), 'style');
+
+/**
+ * The text of an HTML page, with its scripts and its tags removed, line by
+ * line. A tag may run over several lines, so tags go before the split,
+ * keeping their line breaks so the line numbers still match.
+ */
+const textOf = (source) =>
+    withoutScripts(source)
+        .replace(/<[^>]*>/g, (tag) => tag.replace(/[^\n]/g, ' '))
+        .split('\n')
+        .map((line, index) => ({ index, text: line.replace(/&[a-z]+;/gi, '') }));
+
 const failures = [];
 const record = (file, index, rule, text) =>
     failures.push(`${file}:${index + 1}  ${rule}\n    ${text.trim().slice(0, 100)}`);
@@ -103,7 +147,8 @@ for (const file of walk('.')) {
     if (!SCANNED.has(ext) && !SCANNED_NAMES.has(basename(file))) continue;
     const source = readFileSync(file, 'utf8');
     const isMarkdown = ext === '.md';
-    const segments = isMarkdown ? proseOf(source) : commentsOf(source);
+    const segments =
+        ext === '.html' ? textOf(source) : isMarkdown ? proseOf(source) : commentsOf(source);
 
     source.split('\n').forEach((line, index) => {
         if (line.includes(EM_DASH)) record(file, index, 'em dash', line);

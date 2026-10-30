@@ -40,7 +40,12 @@ const pick = (shape: string, measure: (s: Scenario) => number): Series[] =>
     }));
 
 export const Benchmark = () => (
-    <section className="benchmark card" aria-labelledby="benchmark-title">
+    <section
+        className="benchmark card"
+        id="benchmark"
+        tabIndex={-1}
+        aria-labelledby="benchmark-title"
+    >
         <h2 id="benchmark-title">What each protection costs</h2>
         <p className="hint">
             Both strategies sell the last unit exactly once. They differ in what that costs as more

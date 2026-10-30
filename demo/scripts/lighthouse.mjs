@@ -100,7 +100,9 @@ const gate = async (chrome, path) => {
     // The run at the median performance score is the one worth keeping.
     const kept = runs.find((run) => run.scores.performance === scores.performance) ?? runs[0];
     mkdirSync('lighthouse-report', { recursive: true });
-    writeFileSync('lighthouse-report/report.json', JSON.stringify(kept.lhr));
+    // One report per page, named by its path, so a second page never hides the first's.
+    const name = path.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'root';
+    writeFileSync(`lighthouse-report/report-${name}.json`, JSON.stringify(kept.lhr));
     console.log(
         `${path}: ${Object.entries(scores)
             .map(([name, score]) => `${name} ${Math.round(score * 100)}`)
@@ -162,6 +164,7 @@ try {
     const chrome = await launchChrome();
     try {
         failures.push(...(await gate(chrome, server.config.base)));
+        failures.push(...(await gate(chrome, `${server.config.base}about/`)));
     } finally {
         chrome.kill();
     }

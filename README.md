@@ -151,6 +151,9 @@ Use `npm test` instead for watch mode while you work.
 
 ### Check the demo
 
+The demo carries [a page on how it works](https://jasonsdevspace.com/inventory-reservations/about/)
+in plain words, linked from its strip, built beside it and held to the same audit.
+
 CI builds the browser demo in `demo/` as it is published, visits it in Chromium on a desktop and a
 phone with an axe audit on each visit, and audits it with Lighthouse: accessibility has to score a
 hundred and search ninety, and the page has to stay inside budgets for its paint, layout shift and
@@ -515,7 +518,8 @@ The reasoning, and the options it rules out, are in
 Each module sits in its own folder with its tests and any files it reads.
 
 ```
-demo/                  the browser demo, the same store on Postgres in the page
+demo/                  the browser demo, the same store on Postgres in the page, with about/,
+                       the page on how it works, and theme.js, the script both pages run first
 src/
 ├── domain/            business logic, no I/O
 │   ├── commands/      place, ship and cancel

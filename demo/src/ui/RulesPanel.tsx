@@ -126,7 +126,7 @@ export const RulesPanel = ({
     };
 
     return (
-        <section className="rules" aria-label="Try to break it">
+        <section className="rules" id="rules" tabIndex={-1} aria-label="Try to break it">
             <h2>Try to break it</h2>
             <p className="hint">
                 Each of these goes round the store and talks to Postgres directly, the way a bug or
