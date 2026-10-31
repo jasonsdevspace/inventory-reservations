@@ -1,0 +1,169 @@
+name: Release
+
+# Releases a version when a tag such as v0.5.0 is pushed. The tag has to
+# match the version in package.json, have an entry in CHANGELOG.md, and
+# name a commit CI has already published an image for, which it does only
+# once every check on main has passed for that commit. Nothing is rebuilt
+# and the checks are not run again. The image is scanned again, against
+# the vulnerability data of the day, and that same image is given the
+# version as its tag. Then a release on GitHub is created with the
+# changelog entry as its notes and the bill of materials the image was
+# built with attached. A version with a hyphen is marked as a prerelease.
+on:
+    push:
+        tags:
+            - 'v*'
+
+permissions:
+    contents: read
+
+jobs:
+    # The cheap checks first, so a mistyped tag fails in seconds.
+    agree:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: read
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+            prerelease: ${{ steps.version.outputs.prerelease }}
+            digest: ${{ steps.image.outputs.digest }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # The tag names the version, the package declares it, and the
+            # changelog explains it. All three have to agree. A version with
+            # build metadata is refused, since a registry tag cannot hold a
+            # plus sign.
+            - name: Check the tag, the version and the changelog agree
+              id: version
+              env:
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  version="${TAG#v}"
+                  case "$version" in
+                      *+*) echo "$version carries build metadata, which an image tag cannot hold"; exit 1 ;;
+                  esac
+                  declared=$(node -p "require('./package.json').version")
+                  if [ "$version" != "$declared" ]; then
+                      echo "the tag says $version but package.json says $declared"
+                      exit 1
+                  fi
+                  if ! grep -qxF -- "## $version" CHANGELOG.md; then
+                      echo "CHANGELOG.md has no entry for $version"
+                      exit 1
+                  fi
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  case "$version" in
+                      *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+                      *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+                  esac
+
+            # CI tags an image with its commit only when that commit was
+            # pushed to main and every check passed, so the image standing
+            # for the tagged commit is the proof that it was reviewed and
+            # checked. A version tag already in use has to point at that
+            # same image, so a version is never moved to different bytes.
+            - name: Find the image CI published for the commit
+              id: image
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ steps.version.outputs.version }}
+              run: |
+                  digest=$(scripts/registry.sh digest "sha-$GITHUB_SHA")
+                  if [ -z "$digest" ]; then
+                      echo "CI has published no image for $GITHUB_SHA. Tag a commit CI ran on main, the one a merge made, once its run has passed."
+                      exit 1
+                  fi
+                  existing=$(scripts/registry.sh digest "$VERSION")
+                  if [ -n "$existing" ] && [ "$existing" != "$digest" ]; then
+                      echo "$VERSION already names $existing, a different image from $digest"
+                      exit 1
+                  fi
+                  echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+    release:
+        needs: agree
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            packages: write
+        env:
+            VERSION: ${{ needs.agree.outputs.version }}
+            PRERELEASE: ${{ needs.agree.outputs.prerelease }}
+            DIGEST: ${{ needs.agree.outputs.digest }}
+            TAG: ${{ github.ref_name }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # A registry reference has to be lowercase, and an owner's name
+            # need not be.
+            - name: Name the image
+              run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+            - name: Sign in to the registry
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # The image to be released, by digest, under the same rules CI
+            # applies, with the findings accepted in .trivyignore.yaml.
+            - name: Scan the image again
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}@${{ env.DIGEST }}
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+            - name: Name the scanned image with the version
+              run: docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+
+            # The bill of materials attached to the image when it was built,
+            # rather than a second one made now, so there is one list.
+            - name: Fetch the bill of materials
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: scripts/registry.sh sbom "$VERSION" sbom.spdx.json
+
+            # A release a canceled run left as a draft, or without its bill of
+            # materials, is finished rather than skipped. A published release
+            # with its bill of materials is left alone.
+            - name: Create the GitHub release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  if gh release view "$TAG" >/dev/null 2>&1; then
+                      gh release upload "$TAG" "sbom.spdx.json#Bill of materials (SPDX)" --clobber
+                      gh release edit "$TAG" --draft=false
+                      echo "the release for $TAG exists, and is published with its bill of materials"
+                      exit 0
+                  fi
+                  awk -v v="$VERSION" '
+                      $0 == "## " v { on = 1; next }
+                      on && /^## / { exit }
+                      on && (printed || NF) { print; printed = 1 }
+                  ' CHANGELOG.md > notes.md
+                  if ! grep -q . notes.md; then
+                      echo "the changelog entry for $VERSION is empty"
+                      exit 1
+                  fi
+                  flags=""
+                  [ "$PRERELEASE" = "true" ] && flags="--prerelease"
+                  gh release create "$TAG" --title "inventory-reservations $VERSION" \
+                      --notes-file notes.md $flags \
+                      "sbom.spdx.json#Bill of materials (SPDX)"
