@@ -6,11 +6,11 @@ of this, because `docker compose up` sets everything up with the defaults below.
 ## Deploying
 
 The service ships as one distroless image. The API, the migration and the scheduled jobs are all
-scripts inside it, so each is run by starting the image with a different command. Each merge to
-main publishes it as `ghcr.io/jasonsdevspace/inventory-reservations:main`, and as a tag carrying
-the commit, once CI has built it from base images pinned by digest and scanned it. A release adds
-the version as a further tag on that same image, such as `:0.5.0`, which is the one to deploy. The bill of
-materials and the build provenance are attached to the image in the registry.
+scripts inside it, so each is run by starting the image with a different command. Each merge to main
+publishes it as `ghcr.io/jasonsdevspace/inventory-reservations:main`, and as a tag carrying the
+commit, once CI has built it from base images pinned by digest and scanned it. A release adds the
+version as a further tag on that same image, such as `:0.5.0`, which is the one to deploy. The bill
+of materials and the build provenance are attached to the image in the registry.
 
 ```bash
 docker buildx imagetools inspect ghcr.io/jasonsdevspace/inventory-reservations:main --format '{{ json .SBOM }}'

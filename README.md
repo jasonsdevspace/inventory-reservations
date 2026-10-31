@@ -201,9 +201,10 @@ check has passed it is tagged at `ghcr.io/jasonsdevspace/inventory-reservations`
 published is exactly what was scanned.
 
 Pushing a version tag such as `v0.5.0` releases that version. The release workflow checks the tag
-against `package.json` and [the changelog](CHANGELOG.md), runs every check again, gives the image
-CI already scanned for that commit the version as its tag, and creates a release on GitHub with the
-changelog entry as its notes and the bill of materials attached.
+against `package.json` and [the changelog](CHANGELOG.md), and finds the image CI published for that
+commit, which exists only once every check on main has passed. It scans that image again against
+the day's vulnerability data, gives it the version as its tag, and creates a release on GitHub with
+the changelog entry as its notes and the image's own bill of materials attached.
 
 Run the same scan locally with [Trivy](https://trivy.dev/) installed.
 
