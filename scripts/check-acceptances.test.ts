@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { judge, readAcceptances, suppressedFindings } from '../scripts/check-acceptances.mjs';
+import { judge, readAcceptances, suppressedFindings } from './check-acceptances.mjs';
 
 const FILE = `vulnerabilities:
     # a comment

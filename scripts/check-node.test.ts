@@ -1,6 +1,13 @@
+// @vitest-environment node
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
-import { nodeMismatches } from '../scripts/check-node.mjs';
+import { nodeMismatches } from './check-node.mjs';
 
 const ROOT = JSON.stringify({
     private: true,
@@ -281,5 +288,95 @@ describe('the Node version check', () => {
             'README.md:4: tells a reader Node 16',
             'README.md:5: tells a reader Node 14',
         ]);
+    });
+
+    it('reports a JSON file that is not an object, rather than reading fields from it', () => {
+        expect(nodeMismatches(repo({ 'demo/package.json': 'null' }))).toEqual([
+            'demo/package.json: is not a JSON object',
+        ]);
+    });
+});
+
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'check-node.mjs');
+
+/**
+ * The environment for git and the script in a throwaway repository: the
+ * parent's, without anything that points git at another repository or reads
+ * the user's own config, so a run from inside a hook or a rebase stays put.
+ */
+const isolated = (): NodeJS.ProcessEnv => ({
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+});
+
+/**
+ * A throwaway repository holding the files given, the tracked ones added to
+ * git's index and the rest left for git to find, with the script copied in
+ * and run from a folder below the top, as a contributor might.
+ */
+const runIn = (
+    tracked: Record<string, string>,
+    untracked: Record<string, string> = {}
+): { status: number | null; stdout: string; stderr: string } => {
+    const root = mkdtempSync(join(tmpdir(), 'check-node-'));
+    const env = isolated();
+    const write = (files: Record<string, string>): void => {
+        for (const [path, text] of Object.entries(files)) {
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), text);
+        }
+    };
+    try {
+        execFileSync('git', ['init', '--quiet'], { cwd: root, env });
+        write(tracked);
+        execFileSync('git', ['add', '--all'], { cwd: root, env });
+        write(untracked);
+        mkdirSync(join(root, 'scripts'), { recursive: true });
+        copyFileSync(SCRIPT, join(root, 'scripts/check-node.mjs'));
+        const result = spawnSync(process.execPath, ['check-node.mjs'], {
+            cwd: join(root, 'scripts'),
+            encoding: 'utf8',
+            env,
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+};
+
+const CLEAN = {
+    '.nvmrc': '24\n',
+    'package.json': ROOT,
+    'package-lock.json': LOCK,
+};
+
+describe('the Node version check, run as a command', () => {
+    it('passes in a repository that names one major everywhere, reading the files git tracks', () => {
+        const result = runIn(CLEAN);
+        expect(result.stderr).toBe('');
+        expect(result.stdout).toBe('Node version check passed. Everything names Node 24.\n');
+        expect(result.status).toBe(0);
+    });
+
+    it('fails with each problem, reading files git has not been told about yet', () => {
+        const result = runIn(CLEAN, {
+            '.github/actions/node/action.yaml': "runs:\n  using: 'node20'\n",
+        });
+        expect(result.stderr).toBe(
+            'Node version check failed.\n\n.github/actions/node/action.yaml:2: runs an action on Node 20\n'
+        );
+        expect(result.status).toBe(1);
+    });
+
+    it('fails on a problem in a file git tracks', () => {
+        const result = runIn({
+            ...CLEAN,
+            'README.md': 'You need [Node.js 22](https://nodejs.org/).\n',
+        });
+        expect(result.stderr).toBe(
+            'Node version check failed.\n\nREADME.md:1: tells a reader Node 22\n'
+        );
+        expect(result.status).toBe(1);
     });
 });

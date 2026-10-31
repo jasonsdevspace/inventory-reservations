@@ -21,6 +21,7 @@ const ACCEPTANCES = '.trivyignore.yaml';
 const WARN_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** @param {string} value */
 const unquote = (value) => value.replace(/^(['"])(.*)\1$/, '$2');
 
 /**
@@ -33,15 +34,15 @@ const unquote = (value) => value.replace(/^(['"])(.*)\1$/, '$2');
  * @returns {boolean}
  */
 const readEntryLine = (entry, line, inPurls) => {
-    const expires = /^\s+expired_at:\s*(\S+)/.exec(line);
-    if (expires) {
-        entry.expires = unquote(expires[1]);
+    const expires = /^\s+expired_at:\s*(\S+)/.exec(line)?.[1];
+    if (expires !== undefined) {
+        entry.expires = unquote(expires);
         return false;
     }
     if (/^\s+purls:\s*$/.test(line)) return true;
-    const purl = /^\s+-\s+(\S+)\s*$/.exec(line);
-    if (inPurls && purl) {
-        entry.purls.push(unquote(purl[1]));
+    const purl = /^\s+-\s+(\S+)\s*$/.exec(line)?.[1];
+    if (inPurls && purl !== undefined) {
+        entry.purls.push(unquote(purl));
         return true;
     }
     return /^\s+[a-z_]+:/.test(line) ? false : inPurls;
@@ -57,6 +58,7 @@ const readEntryLine = (entry, line, inPurls) => {
  * @returns {{ id: string, purls: string[], expires: string | undefined }[]}
  */
 export const readAcceptances = (text) => {
+    /** @type {{ id: string, purls: string[], expires: string | undefined }[]} */
     const entries = [];
     let section;
     let inPurls = false;
@@ -68,20 +70,34 @@ export const readAcceptances = (text) => {
         } else if (section !== 'vulnerabilities') {
             continue;
         } else if (id) {
-            entries.push({ id: unquote(id[1]), purls: [], expires: undefined });
+            entries.push({ id: unquote(id[1] ?? ''), purls: [], expires: undefined });
             inPurls = false;
-        } else if (entries.length > 0) {
-            inPurls = readEntryLine(entries[entries.length - 1], line, inPurls);
+        } else {
+            const entry = entries.at(-1);
+            if (entry !== undefined) inPurls = readEntryLine(entry, line, inPurls);
         }
     }
     return entries;
 };
 
 /**
+ * The part of a Trivy JSON report this reads.
+ *
+ * @typedef {{
+ *     Results?: {
+ *         ExperimentalModifiedFindings?: {
+ *             Source?: string,
+ *             Finding?: { VulnerabilityID?: string, PkgIdentifier?: { PURL?: string } },
+ *         }[],
+ *     }[],
+ * }} TrivyReport
+ */
+
+/**
  * What each report says the acceptances file suppressed, as the advisory and
  * the package URL it was found in.
  *
- * @param {unknown[]} reports
+ * @param {TrivyReport[]} reports
  * @returns {{ id: string, purl: string }[]}
  */
 export const suppressedFindings = (reports) => {
