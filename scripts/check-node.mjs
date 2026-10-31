@@ -8,14 +8,15 @@
  * passes every other check. This one fails on any of them.
  *
  * - `.nvmrc` holds a bare major, such as `24`, and any other `.nvmrc` agrees.
- * - The root package's `engines.node`, and any other package's that sets one,
- *   starts at that major. A private package also stops before the next one,
- *   so npm warns anyone installing on another. A published package keeps no
- *   upper bound, since the people using it choose their own Node. The
- *   lockfile's copy of the root's engines agrees with it.
- * - Every `@types/node` is on that major.
- * - A workflow or a composite action never names a `node-version` of its own,
- *   and any Node image it runs in is on that major.
+ * - A private package's `engines.node`, the root's included, admits that
+ *   major and no other, so npm warns anyone installing on another. A
+ *   published package keeps no upper bound and may start lower, since the
+ *   people using it choose their own Node, and moving the major used to build
+ *   it should never drop theirs. The lockfile's copy of every package's
+ *   engines agrees with the package.
+ * - Every `@types/node` stays on that major.
+ * - A workflow or an action never names a `node-version` of its own, and any
+ *   Node image or action runtime it uses is on that major.
  * - A Dockerfile's Node images name that major in a tag that can be read.
  * - A README that names a Node major names that one.
  *
@@ -61,13 +62,16 @@ const majorsOf = (range) => {
  * @returns {string[]}
  */
 const checkEngines = (where, range, { major, bounded }) => {
-    const want = bounded ? `>=${major} <${major + 1}` : `>=${major}`;
+    const want = bounded
+        ? `>=${major} <${major + 1}`
+        : `>=${major} or an earlier start, with no upper bound`;
     if (typeof range !== 'string') return [`${where} is not a version range, expected "${want}"`];
     const majors = majorsOf(range);
     const fits =
         majors !== undefined &&
-        majors.from === major &&
-        (bounded ? majors.below === major + 1 : majors.below === undefined);
+        (bounded
+            ? majors.from === major && majors.below === major + 1
+            : majors.from <= major && majors.below === undefined);
     return fits ? [] : [`${where} is "${range}", expected "${want}"`];
 };
 
@@ -102,9 +106,10 @@ const checkPackage = (path, pkg, major) => {
     }
     for (const field of TYPE_FIELDS) {
         const types = pkg[field]?.['@types/node'];
-        if (types === undefined) continue;
+        // An override written as `$@types/node` points at the declared one.
+        if (types === undefined || (typeof types === 'string' && types.startsWith('$'))) continue;
         const majors = typeof types === 'string' ? majorsOf(types) : undefined;
-        if (majors?.from !== major)
+        if (majors?.from !== major || majors.below !== major + 1)
             problems.push(
                 `${path}: ${field} has @types/node ${String(types)}, expected Node ${major}`
             );
@@ -113,21 +118,25 @@ const checkPackage = (path, pkg, major) => {
 };
 
 /**
- * The root package's engines as the lockfile recorded them.
+ * Every package's engines as the lockfile recorded them, against the package.
  *
- * @param {string} path
  * @param {Record<string, any>} lock
- * @param {Record<string, any> | undefined} root
+ * @param {(path: string) => Record<string, any> | undefined} packageAt
  * @returns {string[]}
  */
-const checkLock = (path, lock, root) => {
-    const recorded = lock.packages?.['']?.engines?.node;
-    const declared = root?.engines?.node;
-    if (path !== 'package-lock.json' || recorded === declared) return [];
-    return [
-        `${path}: records engines.node "${String(recorded)}" where package.json says "${String(declared)}", run npm install`,
-    ];
-};
+const checkLock = (lock, packageAt) =>
+    Object.entries(lock.packages ?? {})
+        .filter(([key]) => !key.includes('node_modules'))
+        .flatMap(([key, entry]) => {
+            const path = key === '' ? 'package.json' : `${key}/package.json`;
+            const pkg = packageAt(path);
+            const recorded = entry?.engines?.node;
+            const declared = pkg?.engines?.node;
+            if (pkg === undefined || recorded === declared) return [];
+            return [
+                `package-lock.json: records engines.node "${String(recorded)}" for ${path} where it says "${String(declared)}", run npm install`,
+            ];
+        });
 
 /**
  * A Node image named on a line, if it is one, and what is wrong with it.
@@ -138,7 +147,7 @@ const checkLock = (path, lock, root) => {
  */
 const checkImage = (image, major) => {
     const match = /^(?:[^\s/]+\/)*(node|nodejs(\d+)[\w.-]*)(?::(\S+))?$/.exec(
-        image.replace(/@sha256:\w+$/, '')
+        image.replace(/^docker:\/\//, '').replace(/@sha256:\w+$/, '')
     );
     if (match === null) return undefined;
     if (match[2] !== undefined)
@@ -163,9 +172,12 @@ const checkActionsLine = (code, major) => {
     if (/^\s*-?\s*node-version:/.test(code)) {
         problems.push('names its own Node version, read node-version-file: .nvmrc instead');
     }
-    const image = /^\s*-?\s*(?:image|container):\s*['"]?([^'"\s]+)/.exec(code);
+    const image = /^\s*-?\s*(?:image|container|uses):\s*['"]?([^'"\s]+)/.exec(code);
     const wrong = image ? checkImage(image[1], major) : undefined;
     if (wrong) problems.push(`${wrong} (${image[1]})`);
+    const runtime = /^\s*using:\s*['"]?node(\d+)/.exec(code);
+    if (runtime && Number(runtime[1]) !== major)
+        problems.push(`runs an action on Node ${runtime[1]}`);
     return problems;
 };
 
@@ -190,7 +202,7 @@ const checkDockerLine = (code, major) => {
  * @returns {string[]}
  */
 const checkReadmeLine = (line, major) =>
-    [...line.matchAll(/\bNode(?:\.js)?\]?\s+v?(\d+)\b/g)]
+    [...line.matchAll(/\bnode(?:\.js)?\]?(?:\([^)]*\))?\s*(?:>=?\s*)?v?(\d+)\b/gi)]
         .filter((named) => Number(named[1]) !== major)
         .map((named) => `tells a reader Node ${named[1]}`);
 
@@ -232,10 +244,10 @@ const parse = (path, text) => {
  *
  * @param {string} path
  * @param {string} text
- * @param {{ nvmrc: string, major: number, root: Record<string, any> | undefined }} context
+ * @param {{ nvmrc: string, major: number, packageAt: (path: string) => Record<string, any> | undefined }} context
  * @returns {string[]}
  */
-const checkFile = (path, text, { nvmrc, major, root }) => {
+const checkFile = (path, text, { nvmrc, major, packageAt }) => {
     const name = basename(path);
     if (name === '.nvmrc') {
         return path === '.nvmrc' || text.trim() === nvmrc
@@ -246,9 +258,8 @@ const checkFile = (path, text, { nvmrc, major, root }) => {
         return checkText(path, text, major);
     const { value, problem } = parse(path, text);
     if (problem) return [problem];
-    return name === 'package.json'
-        ? checkPackage(path, value, major)
-        : checkLock(path, value, root);
+    if (name === 'package.json') return checkPackage(path, value, major);
+    return path === 'package-lock.json' ? checkLock(value, packageAt) : [];
 };
 
 /**
@@ -262,10 +273,9 @@ export const nodeMismatches = (files) => {
     if (nvmrc === undefined) return ['.nvmrc is missing'];
     if (!/^\d+$/.test(nvmrc)) return [`.nvmrc holds "${nvmrc}", expected a bare major such as 24`];
     const major = Number(nvmrc);
-    const root = files.has('package.json')
-        ? parse('package.json', files.get('package.json')).value
-        : undefined;
-    return [...files].flatMap(([path, text]) => checkFile(path, text, { nvmrc, major, root }));
+    // A package that cannot be read is reported once, by its own path.
+    const packageAt = (path) => (files.has(path) ? parse(path, files.get(path)).value : undefined);
+    return [...files].flatMap(([path, text]) => checkFile(path, text, { nvmrc, major, packageAt }));
 };
 
 const WATCHED = (path) => {
@@ -278,6 +288,11 @@ const WATCHED = (path) => {
 };
 
 const main = () => {
+    // From the top of the repository, wherever it is started, so every path
+    // is the one the rules expect.
+    process.chdir(
+        execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim()
+    );
     // Tracked files and new ones not yet added, so a check run before a commit
     // sees what the commit will hold.
     const listed = execFileSync(
