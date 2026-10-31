@@ -2,7 +2,8 @@
 #
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
-# are grouped into one pull request per ecosystem to keep the noise down.
+# are grouped into one pull request per ecosystem to keep the noise down, with
+# TypeScript and its lint plugin in a group of their own.
 # Security fixes arrive separately, as soon as an advisory is published.
 # Each update carries the dependencies label alone, so pull requests sort by
 # the kind of work rather than by the package manager.
@@ -14,11 +15,14 @@ updates:
           interval: weekly
       labels: ['dependencies']
       groups:
+          # TypeScript and its lint plugin move together. typescript-eslint
+          # names the TypeScript versions it supports down to the minor, so
+          # Dependabot only offers a TypeScript minor once the plugin accepts it.
+          typescript:
+              patterns: ['typescript', 'typescript-eslint', '@typescript-eslint/*']
+              update-types: [minor, patch]
           npm:
               update-types: [minor, patch]
-              # TypeScript arrives in a pull request of its own, so a minor that
-              # typescript-eslint does not support yet fails there alone.
-              exclude-patterns: ['typescript']
       # A new TypeScript major waits for typescript-eslint to support it,
       # since the lint tooling refuses to install against an unsupported one.
       ignore:
@@ -37,9 +41,6 @@ updates:
       groups:
           demo:
               update-types: [minor, patch]
-              # TypeScript arrives in a pull request of its own, so a minor that
-              # typescript-eslint does not support yet fails there alone.
-              exclude-patterns: ['typescript']
       # Kept on the same TypeScript major as the rest of the repo.
       ignore:
           - dependency-name: typescript
