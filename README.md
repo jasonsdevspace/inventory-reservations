@@ -55,16 +55,16 @@ so when the warehouse count disagrees there is nothing to compare it with.
 
 ## Each claim, and the test behind it
 
-Each promise about stock in the short version has a test that fails if it stops being true. These
-tests run against a real Postgres database, both in CI and in the container you start under Run
-the service.
+These promises from the short version each have a test that fails if the promise stops being
+true. The tests use a real Postgres database: the container you start under Run the service, or
+a Postgres service in CI.
 
 - No ledger entry can be updated or deleted, even by the database's owner. Tested in
   [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
 - When 12 orders arrive at once for the last unit, exactly one succeeds. Tested in
   [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
-- With the protection turned off, the same 12 orders do oversell. That shows the exactly-once test
-  is checking something real. Tested in
+- With the protection turned off, the same race lets more than one order through. That shows the
+  exactly-once test is checking something real. Tested in
   [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
 - A retried request gets the first answer again, not a second order. Tested in
   [`src/postgres/idempotency/idempotency.test.ts`](src/postgres/idempotency/idempotency.test.ts).
@@ -486,7 +486,7 @@ same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks
 
 | Strategy             | How it works                                        | Twelve orders for one unit |
 | -------------------- | --------------------------------------------------- | -------------------------- |
-| `none`               | No protection, kept to prove the bug is real        | usually 11 or 12 succeed   |
+| `none`               | No protection, kept to prove the bug is real        | more than 1 succeeds       |
 | `row_lock` (default) | Locks the stock row, so orders for a SKU queue      | exactly 1 succeeds         |
 | `serializable`       | Postgres detects the conflict and the loser retries | exactly 1 succeeds         |
 

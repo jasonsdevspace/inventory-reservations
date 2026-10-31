@@ -58,7 +58,8 @@ updates:
           interval: weekly
       labels: ['dependencies']
       # A Node major moves the build stages and the distroless runtime
-      # together, along with CI and the engines field, so it is a deliberate
+      # together, along with .nvmrc, the engines field and the Node types in
+      # the service and the demo, so it is a deliberate
       # upgrade rather than an automatic one. Only the build stages would move
       # here, leaving the image built on one Node and run on another.
       ignore:
