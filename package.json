@@ -5,7 +5,7 @@
     "description": "An append-only inventory reservation ledger, and the concurrency control it does not give you for free.",
     "type": "module",
     "engines": {
-        "node": ">=24"
+        "node": ">=24 <25"
     },
     "scripts": {
         "type-check": "tsc --noEmit",
@@ -20,10 +20,11 @@
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "prose": "node scripts/check-prose.mjs",
+        "node-check": "node scripts/check-node.mjs",
         "test": "vitest",
         "test:run": "vitest run",
         "test:coverage": "vitest run --coverage",
-        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run test:run",
+        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run node-check && npm run test:run",
         "prepare": "husky || true"
     },
     "license": "MIT",
