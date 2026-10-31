@@ -72,10 +72,11 @@ grant select, insert, update on idempotency_keys to reservations_app;
 -- refactor or a query somebody adds in a hurry. The database refuses rather
 -- than returning somebody else's inventory.
 --
--- The merchant is read from a setting the application sets with `set_local`
--- inside each transaction. `set_local` rather than `set`, because connections
--- are pooled and reused: a session level setting outlives the request that
--- made it and would hand the next caller the previous caller's tenancy.
+-- The merchant is read from a setting the application makes with `set_config`
+-- marked local inside each transaction. Local rather than session, because
+-- connections are pooled and reused: a session level setting outlives the
+-- request that made it and would hand the next caller the previous caller's
+-- tenancy.
 alter table stock enable row level security;
 alter table reservations enable row level security;
 alter table idempotency_keys enable row level security;

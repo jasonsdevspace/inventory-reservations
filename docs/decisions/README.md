@@ -14,3 +14,6 @@ design.
    checkout, freed the moment it expires.
 5. [Reconciliation detects, and does not repair](0005-reconciliation-detects-but-does-not-repair.md):
    how a wrong ledger is found, and why fixing it is left to a person.
+6. [Tenancy is enforced twice: in the query, and again by Postgres](0006-tenancy-with-row-level-security.md):
+   row level security on every table with a merchant, a service role that can never delete or
+   change the schema, and the defect the second layer caught as soon as it went on.
