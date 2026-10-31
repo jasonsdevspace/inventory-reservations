@@ -1,52 +1,53 @@
 /**
  * Fails the build on prose that should never reach a reader.
  *
- * Three rules, applied to comments, documentation and workflow files. Code is
+ * Applied to comments, documentation, page text and workflow files. Code is
  * left alone, so a semicolon ending a statement is none of this script's
  * business.
  *
- * 1. No em dashes. Pick the punctuation the sentence wants instead.
+ * 1. No em dashes, anywhere in a file. Pick the punctuation the sentence
+ *    wants instead.
  * 2. No semicolons joining clauses in prose. Two sentences read better.
  * 3. No process artifacts. A reader should not be able to tell which parts
- *    were uncertain while they were being written, so there is nothing here
- *    announcing that something is missing, pending or blocked.
- * 4. American spelling. The code already says `order_canceled` and
- *    `SERIALIZATION_FAILURE`, so prose that says otherwise disagrees with the
- *    identifiers beside it.
+ *    were uncertain while they were being written, so nothing announces that
+ *    something is missing, pending or blocked.
+ * 4. No issue or pull request numbers in comments. The number means nothing
+ *    once the tracker moves on, so the comment says what the issue said.
+ * 5. American spelling, to agree with the identifiers beside it.
  *
  * Run with `npm run prose`.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SKIP_DIRS = new Set([
-    'node_modules',
-    '.git',
-    'coverage',
-    'dist',
-    'playwright-report',
-    'lighthouse-report',
-    'test-results',
+const SCANNED = new Set([
+    '.ts',
+    '.tsx',
+    '.js',
+    '.mjs',
+    '.cjs',
+    '.md',
+    '.yml',
+    '.yaml',
+    '.sql',
+    '.html',
+    '.sh',
 ]);
-const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql', '.html', '.sh']);
 
 /** Files with no extension that still carry comments worth checking. */
 const SCANNED_NAMES = new Set(['Dockerfile']);
 
 /**
  * Built from its code point rather than written literally, so this file does
- * not trip its own check. An earlier version did exactly that.
+ * not trip its own check.
  */
 const EM_DASH = String.fromCodePoint(0x2014);
 
 const PROCESS_ARTIFACTS =
     /\b(TODO|FIXME|XXX|HACK|TBD)\b|coming soon|not implemented|waiting on|to be (decided|determined)|for now,? (leave|skip)/i;
 
-/**
- * A comment that points at an issue or a pull request by number. The
- * number means nothing once the tracker moves on, and the comment should
- * have said what the issue said instead.
- */
 const ISSUE_REFERENCES =
     /\b(issue|issues|ticket|tickets|pr|prs|pull request)s? ?#?\d+\b|\(#\d+\)|\bGH-\d+\b/i;
 
@@ -65,109 +66,135 @@ const BRITISH_SPELLINGS = new RegExp(
     'i'
 );
 
-const walk = (dir) =>
-    readdirSync(dir).flatMap((name) => {
-        if (SKIP_DIRS.has(name)) return [];
-        const path = join(dir, name);
-        return statSync(path).isDirectory() ? walk(path) : [path];
+/** @typedef {{ index: number, text: string }} Segment */
+
+/**
+ * Comment text only, so statement semicolons are never considered.
+ *
+ * @param {string} source
+ * @returns {Segment[]}
+ */
+const commentsOf = (source) =>
+    source.split('\n').flatMap((line, index) => {
+        const text = /^\s*(?:\/\/|#|--|\{?\/\*+|\*(?!\/))\s?(.*?)(?:\*\/\}?)?$/.exec(line)?.[1];
+        return text === undefined ? [] : [{ index, text }];
     });
 
-/** Comment text only, so statement semicolons are never considered. */
-const commentsOf = (source) =>
-    source
-        .split('\n')
-        .map((line, index) => {
-            const lineComment = /^\s*(?:\/\/|#|--)\s?(.*)$/.exec(line);
-            if (lineComment) return { index, text: lineComment[1] };
-            const blockLine = /^\s*\*(?!\/)\s?(.*)$/.exec(line);
-            if (blockLine) return { index, text: blockLine[1] };
-            return null;
-        })
-        .filter((entry) => entry !== null);
-
-/** Markdown body text, with fenced blocks, inline code and entities removed. */
-const proseOf = (source) =>
-    source
-        .split('\n')
-        .map((line, index) => ({ index, line }))
-        .filter((_, index, all) => {
-            let fenced = false;
-            for (let i = 0; i <= index; i += 1) {
-                if (/^\s*```/.test(all[i].line)) fenced = !fenced;
-            }
-            return !fenced && !/^\s*```/.test(all[index].line);
-        })
-        .map(({ index, line }) => ({
-            index,
-            text: line.replace(/`[^`]*`/g, '').replace(/&[a-z]+;/gi, ''),
-        }));
-
 /**
- * The page with every block of the named kind blanked, line breaks kept,
- * so the line numbers still match. Found by scanning for the tags rather
- * than with a pattern, since a pattern over HTML is easy to get subtly
- * wrong.
+ * Markdown body text, with fenced blocks, inline code and entities removed.
+ *
+ * @param {string} source
+ * @returns {Segment[]}
  */
-const withoutBlocks = (source, tag) => {
-    const lower = source.toLowerCase();
-    let out = '';
-    let at = 0;
-    for (;;) {
-        const open = lower.indexOf(`<${tag}`, at);
-        if (open === -1) return out + source.slice(at);
-        let close = lower.indexOf(`</${tag}`, open);
-        if (close === -1) close = source.length;
-        const end =
-            close === source.length ? close : source.indexOf('>', close) + 1 || source.length;
-        out += source.slice(at, open) + source.slice(open, end).replace(/[^\n]/g, '');
-        at = end;
-    }
+const proseOf = (source) => {
+    let fenced = false;
+    return source.split('\n').flatMap((line, index) => {
+        if (/^\s*```/.test(line)) {
+            fenced = !fenced;
+            return [];
+        }
+        return fenced
+            ? []
+            : [{ index, text: line.replace(/`[^`]*`/g, '').replace(/&[a-z]+;/gi, '') }];
+    });
 };
 
-/** A page with its scripts and its styles blanked, which are code, not prose. */
-const withoutScripts = (source) => withoutBlocks(withoutBlocks(source, 'script'), 'style');
-
 /**
- * The text of an HTML page, with its scripts and its tags removed, line by
- * line. A tag may run over several lines, so tags go before the split,
- * keeping their line breaks so the line numbers still match.
+ * A page's text and its comments, line by line. Scripts and styles are code,
+ * so they are blanked, and tags are blanked with their line breaks kept so the
+ * line numbers still match. A comment's own text is kept, since it is prose.
+ *
+ * @param {string} source
+ * @returns {Segment[]}
  */
-const textOf = (source) =>
-    withoutScripts(source)
+const pageTextOf = (source) =>
+    source
+        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, (block) => block.replace(/[^\n]/g, ' '))
+        .replace(/<!--|-->/g, '    ')
         .replace(/<[^>]*>/g, (tag) => tag.replace(/[^\n]/g, ' '))
         .split('\n')
         .map((line, index) => ({ index, text: line.replace(/&[a-z]+;/gi, '') }));
 
-const failures = [];
-const record = (file, index, rule, text) =>
-    failures.push(`${file}:${index + 1}  ${rule}\n    ${text.trim().slice(0, 100)}`);
+/**
+ * The problems in one piece of prose, by rule.
+ *
+ * @param {string} text
+ * @param {{ issues: boolean }} options
+ * @returns {string[]}
+ */
+export const problemsIn = (text, { issues }) =>
+    [
+        PROCESS_ARTIFACTS.test(text) && 'process artifact',
+        issues && ISSUE_REFERENCES.test(text) && 'issue reference',
+        /[A-Za-z];/.test(text) && 'semicolon in prose',
+        BRITISH_SPELLINGS.test(text) && 'British spelling',
+    ].filter((rule) => typeof rule === 'string');
 
-for (const file of walk('.')) {
-    const ext = extname(file);
-    if (!SCANNED.has(ext) && !SCANNED_NAMES.has(basename(file))) continue;
-    const source = readFileSync(file, 'utf8');
+/**
+ * Every problem in one file, as `path:line  rule` with the line beneath.
+ *
+ * @param {string} path
+ * @param {string} source
+ * @returns {string[]}
+ */
+export const proseProblems = (path, source) => {
+    const ext = extname(path);
+    if (!SCANNED.has(ext) && !SCANNED_NAMES.has(basename(path))) return [];
     const isMarkdown = ext === '.md';
-    const segments =
-        ext === '.html' ? textOf(source) : isMarkdown ? proseOf(source) : commentsOf(source);
+    const segments = isMarkdown
+        ? proseOf(source)
+        : ext === '.html'
+          ? pageTextOf(source)
+          : commentsOf(source);
+    /** @type {(index: number, rule: string, text: string) => string} */
+    const report = (index, rule, text) =>
+        `${path}:${index + 1}  ${rule}\n    ${text.trim().slice(0, 100)}`;
+    return [
+        ...source
+            .split('\n')
+            .flatMap((line, index) =>
+                line.includes(EM_DASH) ? [report(index, 'em dash', line)] : []
+            ),
+        ...segments.flatMap(({ index, text }) =>
+            problemsIn(text, { issues: !isMarkdown }).map((rule) => report(index, rule, text))
+        ),
+    ];
+};
 
-    source.split('\n').forEach((line, index) => {
-        if (line.includes(EM_DASH)) record(file, index, 'em dash', line);
-    });
-
-    for (const { index, text } of segments) {
-        if (PROCESS_ARTIFACTS.test(text)) record(file, index, 'process artifact', text);
-        if (!isMarkdown && ISSUE_REFERENCES.test(text))
-            record(file, index, 'issue reference', text);
-        if (/[A-Za-z];/.test(text)) record(file, index, 'semicolon in prose', text);
-        if (BRITISH_SPELLINGS.test(text)) record(file, index, 'British spelling', text);
+const main = () => {
+    // From the top of this script's repository, over tracked files and new
+    // ones not yet added, so whatever the repository ignores is skipped too.
+    const here = dirname(fileURLToPath(import.meta.url));
+    process.chdir(
+        execFileSync('git', ['rev-parse', '--show-toplevel'], {
+            cwd: here,
+            encoding: 'utf8',
+        }).trim()
+    );
+    const listed = execFileSync(
+        'git',
+        ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+        {
+            encoding: 'utf8',
+            maxBuffer: 64 * 1024 * 1024,
+        }
+    ).split('\0');
+    const failures = [...new Set(listed)]
+        .filter((path) => path !== '' && existsSync(path))
+        .flatMap((path) => proseProblems(path, readFileSync(path, 'utf8')));
+    if (failures.length > 0) {
+        console.error(`Prose check failed with ${failures.length} problem(s):\n`);
+        console.error(failures.join('\n'));
+        process.exit(1);
     }
-}
+    console.log(
+        'Prose check passed. No em dashes, prose semicolons, process artifacts or British spellings.'
+    );
+};
 
-if (failures.length > 0) {
-    console.error(`Prose check failed with ${failures.length} problem(s):\n`);
-    console.error(failures.join('\n'));
-    process.exit(1);
-}
-console.log(
-    'Prose check passed. No em dashes, prose semicolons, process artifacts or British spellings.'
-);
+// Compared by real path, so a checkout reached through a symlink still runs.
+if (
+    process.argv[1] !== undefined &&
+    realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+    main();
