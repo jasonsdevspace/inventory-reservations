@@ -6,94 +6,174 @@
  * anything. That happens the day a base image ships the fix, and the entry
  * then sits there excusing a finding that no longer exists. Given Trivy's
  * JSON reports, made with suppressed findings shown, this fails on any
- * acceptance that suppressed nothing, so the pull request that brings the
- * fix also removes the excuse. It warns on any acceptance within thirty
- * days of its date, so the review happens before the scan fails.
+ * acceptance that suppressed nothing in the package it names, so the pull
+ * request that brings the fix also removes the excuse. It warns on any
+ * acceptance within thirty days of its date, and with `--strict`, which the
+ * weekly scheduled run uses, that warning fails too, so a quiet repository
+ * still hears about it before the scan starts failing.
  *
- * Run as `node scripts/check-acceptances.mjs <report.json> [<report.json> ...]`.
+ * Run as `node scripts/check-acceptances.mjs [--strict] <report.json> ...`.
  */
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const ACCEPTANCES = '.trivyignore.yaml';
 const WARN_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const unquote = (value) => value.replace(/^(['"])(.*)\1$/, '$2');
+
 /**
- * Reads the id and date of each entry. The file's shape is fixed by Trivy and
- * by this repo, one `- id:` line per entry with its `expired_at:` below it, so
- * reading those two keys is enough.
+ * Applies one line inside an entry to it, and says whether the lines that
+ * follow are still the entry's list of packages.
+ *
+ * @param {{ purls: string[], expires: string | undefined }} entry
+ * @param {string} line
+ * @param {boolean} inPurls
+ * @returns {boolean}
+ */
+const readEntryLine = (entry, line, inPurls) => {
+    const expires = /^\s+expired_at:\s*(\S+)/.exec(line);
+    if (expires) {
+        entry.expires = unquote(expires[1]);
+        return false;
+    }
+    if (/^\s+purls:\s*$/.test(line)) return true;
+    const purl = /^\s+-\s+(\S+)\s*$/.exec(line);
+    if (inPurls && purl) {
+        entry.purls.push(unquote(purl[1]));
+        return true;
+    }
+    return /^\s+[a-z_]+:/.test(line) ? false : inPurls;
+};
+
+/**
+ * Reads the vulnerability entries: each one's id, the packages it is scoped
+ * to and its date. Entries under the file's other sections, such as
+ * misconfigurations or secrets, are not findings a vulnerability report can
+ * show, so they are left out.
  *
  * @param {string} text
- * @returns {{ id: string, expires: string | undefined }[]}
+ * @returns {{ id: string, purls: string[], expires: string | undefined }[]}
  */
 export const readAcceptances = (text) => {
     const entries = [];
+    let section;
+    let inPurls = false;
     for (const line of text.split('\n')) {
+        const top = /^([A-Za-z_]+):\s*$/.exec(line);
         const id = /^\s*-\s+id:\s*(\S+)/.exec(line);
-        if (id) {
-            entries.push({ id: id[1], expires: undefined });
+        if (top) {
+            section = top[1];
+        } else if (section !== 'vulnerabilities') {
             continue;
-        }
-        const expires = /^\s+expired_at:\s*(\S+)/.exec(line);
-        if (expires && entries.length > 0) {
-            entries[entries.length - 1].expires = expires[1];
+        } else if (id) {
+            entries.push({ id: unquote(id[1]), purls: [], expires: undefined });
+            inPurls = false;
+        } else if (entries.length > 0) {
+            inPurls = readEntryLine(entries[entries.length - 1], line, inPurls);
         }
     }
     return entries;
 };
 
 /**
- * The ids each report says an acceptance suppressed.
+ * What each report says the acceptances file suppressed, as the advisory and
+ * the package URL it was found in.
  *
  * @param {unknown[]} reports
- * @returns {Set<string>}
+ * @returns {{ id: string, purl: string }[]}
  */
-export const suppressedIds = (reports) => {
-    const ids = new Set();
+export const suppressedFindings = (reports) => {
+    const found = [];
     for (const report of reports) {
         for (const result of report.Results ?? []) {
             for (const modified of result.ExperimentalModifiedFindings ?? []) {
-                if (modified.Source?.endsWith(ACCEPTANCES) && modified.Finding?.VulnerabilityID) {
-                    ids.add(modified.Finding.VulnerabilityID);
+                const finding = modified.Finding;
+                if (modified.Source?.endsWith(ACCEPTANCES) && finding?.VulnerabilityID) {
+                    found.push({
+                        id: finding.VulnerabilityID,
+                        purl: finding.PkgIdentifier?.PURL ?? '',
+                    });
                 }
             }
         }
     }
-    return ids;
+    return found;
 };
 
 /**
- * @param {{ id: string, expires: string | undefined }[]} acceptances
- * @param {Set<string>} suppressed
+ * A package URL with its version and qualifiers taken off, which is how an
+ * acceptance names a package.
+ *
+ * @param {string} purl
+ */
+const packageOf = (purl) => purl.replace(/[@?#].*$/, '');
+
+/**
+ * Whether a suppressed finding is the one an entry excuses: the same advisory,
+ * and when the entry is scoped, one of its packages.
+ *
+ * @param {{ id: string, purls: string[] }} entry
+ * @param {{ id: string, purl: string }} finding
+ */
+const excuses = (entry, finding) =>
+    entry.id === finding.id &&
+    (entry.purls.length === 0 ||
+        entry.purls.some((purl) => packageOf(purl) === packageOf(finding.purl)));
+
+/**
+ * The day an entry stops applying, from the dates Trivy accepts: a plain date
+ * or a full timestamp. Anything else is unreadable.
+ *
+ * @param {string} expires
+ */
+const expiryOf = (expires) =>
+    Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(expires) ? `${expires}T00:00:00Z` : expires);
+
+/**
+ * @param {{ id: string, purls: string[], expires: string | undefined }[]} acceptances
+ * @param {{ id: string, purl: string }[]} suppressed
  * @param {Date} today
  * @returns {{ errors: string[], warnings: string[] }}
  */
 export const judge = (acceptances, suppressed, today) => {
     const errors = [];
     const warnings = [];
-    for (const { id, expires } of acceptances) {
+    for (const entry of acceptances) {
+        const { id, expires } = entry;
         if (!expires) {
             errors.push(`${id} has no expired_at date, and every acceptance needs one`);
             continue;
         }
-        const days = Math.ceil((Date.parse(`${expires}T00:00:00Z`) - today.getTime()) / DAY_MS);
+        const ends = expiryOf(expires);
+        if (Number.isNaN(ends)) {
+            errors.push(`${id} has an expired_at of ${expires}, which is not a date`);
+            continue;
+        }
+        const days = Math.ceil((ends - today.getTime()) / DAY_MS);
         if (days <= 0) {
             errors.push(`${id} expired on ${expires}. Fix it, or review it and set a new date`);
-        } else if (!suppressed.has(id)) {
+        } else if (!suppressed.some((finding) => excuses(entry, finding))) {
             errors.push(`${id} matches nothing any more. Remove it from ${ACCEPTANCES}`);
         } else if (days <= WARN_DAYS) {
-            warnings.push(`${id} expires on ${expires}, in ${days} days. Review it before then`);
+            const when = days === 1 ? 'tomorrow' : `in ${days} days`;
+            warnings.push(`${id} expires on ${expires}, ${when}. Review it before then`);
         }
     }
     return { errors, warnings };
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-    const reports = process.argv.slice(2).map((path) => JSON.parse(readFileSync(path, 'utf8')));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    const args = process.argv.slice(2);
+    const strict = args.includes('--strict');
+    const reports = args
+        .filter((arg) => arg !== '--strict')
+        .map((path) => JSON.parse(readFileSync(path, 'utf8')));
     const acceptances = readAcceptances(readFileSync(ACCEPTANCES, 'utf8'));
-    const { errors, warnings } = judge(acceptances, suppressedIds(reports), new Date());
+    const { errors, warnings } = judge(acceptances, suppressedFindings(reports), new Date());
     for (const warning of warnings) console.log(`::warning file=${ACCEPTANCES}::${warning}`);
     for (const error of errors) console.log(`::error file=${ACCEPTANCES}::${error}`);
-    if (errors.length > 0) process.exit(1);
-    console.log(`${acceptances.length} acceptances checked, each still matches a finding`);
+    if (errors.length > 0 || (strict && warnings.length > 0)) process.exit(1);
+    console.log('Every acceptance still matches a finding, and none is near its date');
 }

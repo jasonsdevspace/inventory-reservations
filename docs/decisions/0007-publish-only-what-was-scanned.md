@@ -44,8 +44,9 @@ not fail, because the fix is an upstream release, which Dependabot brings.
 **An acceptance is narrow, explained and temporary.** The only way past a failing finding is an
 entry in `.trivyignore.yaml`: one advisory, scoped to the one package its reason covers, with the
 reason and a date. Trivy stops honoring it on that date. A check in CI warns thirty days ahead and
-fails on an entry that no longer matches anything, so the pull request that brings the fix also
-removes the excuse.
+fails on an entry that no longer matches anything in its package, so the pull request that brings
+the fix also removes the excuse. The same check runs weekly on a schedule against the published
+image, where a warning fails the run, so a week with no pushes still hears about a date coming up.
 
 **What ships is what was scanned.** On main the image is pushed once, by digest and untagged, with
 a bill of materials and build provenance attached, and that pushed image is the one scanned. A
@@ -75,8 +76,8 @@ tag, and attaches the same bill of materials. Nothing is rebuilt along the way.
 
 - The image job runs on every pull request, so the pinning, both scans and the acceptance check run
   before any merge.
-- The acceptance check has unit tests for each verdict: still matching, matching nothing, near its
-  date, past its date and without one.
+- The acceptance check has unit tests for each verdict: still matching, matching nothing, matching
+  only another package, near its date, past it, an unreadable date and none.
 - The acceptance file was checked against a real scan in both directions: scoped to `libssl3` it
   passes, and scoped to another package the same findings fail.
 - The first release, 0.5.0, ran the release workflow end to end and tagged the digest CI had

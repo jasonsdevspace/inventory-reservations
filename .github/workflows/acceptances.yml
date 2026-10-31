@@ -1,0 +1,67 @@
+name: Acceptances
+
+# Checks the acceptances in .trivyignore.yaml every week, against the image
+# published as main and the lockfiles on main, whether or not anything was
+# pushed. CI runs the same check on every change, but a repository that goes
+# quiet would otherwise hear about an expiring acceptance only when the scan
+# starts failing. This run is strict: an acceptance within thirty days of its
+# date fails it, and a failed scheduled run is emailed to the repository's
+# owner, so the review happens before the date rather than after it.
+on:
+    schedule:
+        - cron: '0 14 * * 1'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Name the image
+              run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+            - name: Sign in to the registry
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Report what each acceptance suppressed in the image
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}:main
+                  scanners: vuln
+                  format: json
+                  output: acceptances-image.json
+                  trivyignores: .trivyignore.yaml
+
+            - name: Report what each acceptance suppressed in the lockfiles
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  format: json
+                  output: acceptances-fs.json
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            - name: Check the acceptances, strictly
+              run: node scripts/check-acceptances.mjs --strict acceptances-image.json acceptances-fs.json

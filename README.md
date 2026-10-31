@@ -190,15 +190,15 @@ Nothing here needs the Postgres container, since the demo starts its own in the 
 
 ### Check the image
 
-CI scans both lockfiles and then builds the image the service ships as on every run, from base
-images pinned by digest, and scans it. A high or critical vulnerability with a fix available fails
-the build. Findings with no fix yet are listed in their own step without failing it, since the fix
-is the next base image or release, and Dependabot opens that pull request. A finding that does not
-apply is accepted in `.trivyignore.yaml`, scoped to one package, with the reason and a date the
-acceptance expires, so it is looked at again rather than kept forever. A check in CI warns thirty
-days before an acceptance expires, and fails on one that no longer matches anything. The acceptances
-there today cover Debian's OpenSSL in the runtime image, which nothing loads, because Node carries
-its own.
+CI builds the image the service ships as on every run, from base images pinned by digest, and scans
+it and both lockfiles. A high or critical vulnerability with a fix available fails the build.
+Findings with no fix yet are listed in their own step without failing it, since the fix is the next
+base image or release, and Dependabot opens that pull request. A finding that does not apply is
+accepted in `.trivyignore.yaml`, scoped to one package, with the reason and a date the acceptance
+expires, so it is looked at again rather than kept forever. A check in CI, and a weekly scheduled
+run, warn thirty days before an acceptance expires, and fail on one that no longer matches anything
+in its package. The acceptances there today cover Debian's OpenSSL in the runtime image, which
+nothing loads, because Node carries its own.
 
 A bill of materials is kept with every run. On main the image is pushed with its bill of materials
 and a build provenance attestation attached, and that pushed image is the one scanned. Once every
