@@ -5,3 +5,5 @@ dist
 node_modules
 scripts
 src/**/*.test.ts
+.cache
+sbom.cdx.json

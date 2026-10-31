@@ -165,8 +165,173 @@ jobs:
                   path: demo/dist
                   retention-days: 1
 
+    # The image the service ships as, built on every run from base images
+    # pinned by digest. The lockfiles are scanned before the build, and the
+    # image after it. A high or critical vulnerability with a fix available
+    # fails the job, and the only way past that is an entry in
+    # .trivyignore.yaml, scoped to one package, with a reason and an expiry.
+    # Findings with no fix yet are listed in their own step and do not fail
+    # the job, since the fix is the next base image or release, which
+    # Dependabot brings. A software bill of materials is kept with every run.
+    #
+    # On main the build is pushed by digest, with its bill of materials and
+    # a build provenance attestation attached, and that pushed image is what
+    # gets scanned. It carries no tag until the publish job below names it,
+    # so what is published is the exact bytes that were scanned.
+    image:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        outputs:
+            name: ${{ steps.name.outputs.image }}
+            digest: ${{ steps.push.outputs.digest }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # A registry reference has to be lowercase, and an owner's name
+            # need not be.
+            - name: Name the image
+              id: name
+              run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+            # Dev dependencies are included on purpose. They never reach the
+            # image, but they run on every laptop and in this workflow.
+            - name: Scan the dependencies
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+            - name: Build the image
+              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+              with:
+                  context: .
+                  load: true
+                  tags: ${{ steps.name.outputs.image }}:ci
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Sign in to the registry
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build the image and push it by digest
+              id: push
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+              with:
+                  context: .
+                  outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+                  sbom: true
+                  provenance: mode=max
+
+            - name: Choose the image to scan
+              id: built
+              env:
+                  IMAGE: ${{ steps.name.outputs.image }}
+                  DIGEST: ${{ steps.push.outputs.digest }}
+              run: |
+                  if [ -n "$DIGEST" ]; then
+                      echo "ref=$IMAGE@$DIGEST" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "ref=$IMAGE:ci" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Scan the image
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.built.outputs.ref }}
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            # The same scan with nothing filtered out, so a finding that has
+            # no fix yet is on the record without failing the job.
+            - name: List findings with no fix yet
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.built.outputs.ref }}
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  exit-code: 0
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            - name: Write the bill of materials
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.built.outputs.ref }}
+                  format: cyclonedx
+                  output: sbom.cdx.json
+                  skip-setup-trivy: true
+
+            - name: Keep the bill of materials
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: sbom
+                  path: sbom.cdx.json
+                  retention-days: 30
+
+    # Names the scanned image once every check on main has passed, as main
+    # and as the commit. Nothing is rebuilt here, the tags point at the
+    # digest the image job pushed and scanned.
+    publish:
+        needs: [verify, demo, image]
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        runs-on: ubuntu-latest
+        permissions:
+            packages: write
+        steps:
+            - name: Sign in to the registry
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+            - name: Tag the scanned image
+              env:
+                  IMAGE: ${{ needs.image.outputs.name }}
+                  DIGEST: ${{ needs.image.outputs.digest }}
+              run: |
+                  docker buildx imagetools create \
+                      --tag "$IMAGE:main" \
+                      --tag "$IMAGE:sha-$GITHUB_SHA" \
+                      "$IMAGE@$DIGEST"
+
     # The browser demo, published to GitHub Pages at /inventory-reservations/
-    # once everything above has passed on main. A merge that fails a check,
+    # once the verify and demo jobs have passed on main. The image job does
+    # not hold it back, since the page does not run the image. A merge that fails a check,
     # including the tests against Postgres, the browser tests and the
     # Lighthouse audit, is never deployed.
     deploy:
