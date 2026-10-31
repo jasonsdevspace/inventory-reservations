@@ -186,17 +186,18 @@ Nothing here needs the Postgres container, since the demo starts its own in the 
 
 ### Check the image
 
-CI builds the image the service ships as on every run, from base images pinned by digest, and
-scans it along with the two lockfiles. A high or critical vulnerability with a fix available fails
-the build. One with no fix yet is reported and does not, since the fix is the next base image or
-release, and Dependabot opens that pull request. A finding that does not apply is accepted in
-`.trivyignore.yaml`, with the reason and a date the acceptance expires, so it is looked at again
-rather than kept forever. The acceptances there today cover Debian's OpenSSL in the runtime
-image, which nothing loads, because Node carries its own.
+CI scans both lockfiles and then builds the image the service ships as on every run, from base
+images pinned by digest, and scans it. A high or critical vulnerability with a fix available fails
+the build. Findings with no fix yet are listed in their own step without failing it, since the fix
+is the next base image or release, and Dependabot opens that pull request. A finding that does not
+apply is accepted in `.trivyignore.yaml`, scoped to one package, with the reason and a date the
+acceptance expires, so it is looked at again rather than kept forever. The acceptances there today
+cover Debian's OpenSSL in the runtime image, which nothing loads, because Node carries its own.
 
-A bill of materials is kept with every run, and each merge to main publishes the image to
-`ghcr.io/jasonsdevspace/inventory-reservations` with the bill of materials and a build provenance
-attestation attached, after the scan has passed.
+A bill of materials is kept with every run. On main the image is pushed with its bill of materials
+and a build provenance attestation attached, and that pushed image is the one scanned. Once every
+check has passed it is tagged at `ghcr.io/jasonsdevspace/inventory-reservations`, so what is
+published is exactly what was scanned.
 
 Run the same scan locally with [Trivy](https://trivy.dev/) installed.
 
