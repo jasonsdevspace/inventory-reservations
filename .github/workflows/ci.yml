@@ -166,13 +166,16 @@ jobs:
                   retention-days: 1
 
     # The image the service ships as, built on every run from base images
-    # pinned by digest. The lockfiles are scanned before the build, and the
-    # image after it. A high or critical vulnerability with a fix available
-    # fails the job, and the only way past that is an entry in
-    # .trivyignore.yaml, scoped to one package, with a reason and an expiry.
-    # Findings with no fix yet are listed in their own step and do not fail
-    # the job, since the fix is the next base image or release, which
-    # Dependabot brings. A software bill of materials is kept with every run.
+    # pinned by digest. The image and the lockfiles are scanned after the
+    # build. A high or critical vulnerability with a fix available fails the
+    # job, and the only way past that is an entry in .trivyignore.yaml, scoped
+    # to one package, with a reason and an expiry. A check reads what each
+    # entry suppressed before those scans gate, so a lapsed or unused entry is
+    # named in words, and a weekly run in acceptances.yml catches one nearing
+    # its date in a quiet week. Findings with no fix yet are listed in their
+    # own step and do not fail the job, since the fix is the next base image
+    # or release, which Dependabot brings. A software bill of materials is
+    # kept with every run.
     #
     # On main the build is pushed by digest, with its bill of materials and
     # a build provenance attestation attached, and that pushed image is what
@@ -198,19 +201,17 @@ jobs:
               id: name
               run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-            # Dev dependencies are included on purpose. They never reach the
-            # image, but they run on every laptop and in this workflow.
-            - name: Scan the dependencies
+            - name: Report what each acceptance suppressed in the lockfiles
               uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
               env:
                   TRIVY_INCLUDE_DEV_DEPS: 'true'
+                  TRIVY_SHOW_SUPPRESSED: 'true'
               with:
                   scan-type: fs
                   scan-ref: .
                   scanners: vuln
-                  severity: HIGH,CRITICAL
-                  ignore-unfixed: true
-                  exit-code: 1
+                  format: json
+                  output: acceptances-fs.json
                   trivyignores: .trivyignore.yaml
 
             - name: Set up Buildx
@@ -257,6 +258,45 @@ jobs:
                   else
                       echo "ref=$IMAGE:ci" >> "$GITHUB_OUTPUT"
                   fi
+
+            # Reports with the suppressed findings shown, so the check below can
+            # see which acceptance excused what. They run before the scans
+            # that gate the build, so a lapsed acceptance is reported in words
+            # rather than as a raw finding.
+            - name: Report what each acceptance suppressed in the image
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.built.outputs.ref }}
+                  scanners: vuln
+                  format: json
+                  output: acceptances-image.json
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            # Fails on an acceptance that no longer matches anything, which is
+            # what a base image with the fix leaves behind, and warns on one
+            # within thirty days of its date.
+            - name: Check the acceptances
+              run: node scripts/check-acceptances.mjs acceptances-image.json acceptances-fs.json
+
+            # Dev dependencies are included on purpose. They never reach the
+            # image, but they run on every laptop and in this workflow.
+            - name: Scan the dependencies
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
 
             - name: Scan the image
               uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

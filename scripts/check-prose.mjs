@@ -28,7 +28,7 @@ const SKIP_DIRS = new Set([
     'lighthouse-report',
     'test-results',
 ]);
-const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql', '.html']);
+const SCANNED = new Set(['.ts', '.js', '.mjs', '.md', '.yml', '.yaml', '.sql', '.html', '.sh']);
 
 /** Files with no extension that still carry comments worth checking. */
 const SCANNED_NAMES = new Set(['Dockerfile']);

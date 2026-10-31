@@ -6,3 +6,7 @@ dist
 playwright-report
 test-results
 lighthouse-report
+# Reports the image job writes, if it is reproduced locally.
+acceptances-*.json
+sbom.cdx.json
+sbom.spdx.json
