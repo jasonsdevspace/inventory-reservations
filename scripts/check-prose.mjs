@@ -139,7 +139,7 @@ const pageTextOf = (source) =>
         .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, (block) =>
             block.replace(/[^\n]/g, '')
         )
-        .replace(/<!--|-->/g, ' ')
+        .replace(/<!--|--!?>/g, ' ')
         .replace(/<[^>]*>/g, (tag) => {
             const read = [...tag.matchAll(READ_ATTRIBUTES)].map((attribute) => attribute[1]);
             if (SHOWN_META.test(tag)) read.push(/\bcontent="([^"]*)"/i.exec(tag)?.[1] ?? '');

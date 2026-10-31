@@ -51,6 +51,10 @@ describe('the prose check', () => {
             'index.html:1  semicolon in prose',
             'index.html:4  British spelling',
         ]);
+        expect(rules('ends.html', '<!-- one; two --!>\n<p>The colour</p>\n')).toEqual([
+            'ends.html:1  semicolon in prose',
+            'ends.html:2  British spelling',
+        ]);
         expect(rules('end.html', '<p>ok</p>\n<script src="x.js">\nconst a = b;\n')).toEqual([]);
     });
 
