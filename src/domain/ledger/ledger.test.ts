@@ -52,7 +52,7 @@ describe('salableQuantity', () => {
         expect(salableQuantity(stock(7), entries, strict, now)).toBe(7);
     });
 
-    it('recovers when an order is cancelled, without touching physical stock', () => {
+    it('recovers when an order is canceled, without touching physical stock', () => {
         const entries = [entry('o-1', -3, 'order_placed'), entry('o-1', 3, 'order_canceled')];
         expect(salableQuantity(stock(10), entries, strict, now)).toBe(10);
     });

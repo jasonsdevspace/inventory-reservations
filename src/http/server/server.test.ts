@@ -126,7 +126,7 @@ describe('writing against a sku that does not exist', () => {
     it.each([
         ['placing', '/orders', { sku: 'NOPE', orderId: 'o-1', quantity: 1 }],
         ['shipping', '/orders/o-1/shipments', { sku: 'NOPE', quantity: 1 }],
-        ['cancelling', '/orders/o-1/cancellations', { sku: 'NOPE', quantity: 1 }],
+        ['canceling', '/orders/o-1/cancellations', { sku: 'NOPE', quantity: 1 }],
     ])(
         'answers not found when %s, as a read does, rather than failing',
         async (_label, url, body) => {
