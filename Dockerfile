@@ -9,7 +9,13 @@
 # uses musl rather than glibc, and a native dependency compiled against one
 # fails to load against the other. Nothing here is native today, which is why
 # the mismatch worked, and why it would have broken the day something was.
-FROM node:24-bookworm-slim AS build
+#
+# Each base image is pinned by digest, so the bytes the build runs on are the
+# bytes that were reviewed, and a tag that moves under a release cannot change
+# what ships. The tag stays beside the digest for the reader. Dependabot
+# refreshes the digests weekly, as a pull request that CI builds and scans
+# before anyone merges it.
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -19,12 +25,12 @@ RUN npm run build
 
 # Production dependencies only, resolved separately so the dev toolchain never
 # reaches the final image.
-FROM node:24-bookworm-slim AS dependencies
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-FROM gcr.io/distroless/nodejs24-debian12 AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:latest@sha256:61f4f4341db81820c24ce771b83d202eb6452076f58628cd536cc7d94a10978b AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

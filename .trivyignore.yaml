@@ -1,0 +1,32 @@
+# Findings the image scan in CI has been told to accept, and why.
+#
+# CI fails on a high or critical vulnerability with a fix available, in the
+# built image or in either lockfile. An entry here is the only way past that,
+# and each one carries the reason it does not apply and a date it stops
+# applying, so an acceptance is reviewed again rather than kept forever.
+vulnerabilities:
+    # The runtime image carries Debian's libssl3, which nothing in it loads.
+    # Node links its own OpenSSL statically, 3.5.5 in Node 24.14, and the API's
+    # only use of TLS goes through Node. The fixed package arrives with the next
+    # distroless rebuild, which Dependabot brings as a digest update.
+    - id: CVE-2026-31789
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-28387
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-28388
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-28389
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-28390
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-45447
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31
+    - id: CVE-2026-84782
+      statement: Debian libssl3 is not loaded. Node carries its own OpenSSL.
+      expired_at: 2027-01-31

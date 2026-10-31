@@ -49,7 +49,8 @@ so when the warehouse count disagrees there is nothing to compare it with.
 - Tenancy is enforced twice, by the API key and by Postgres row level security, and the service
   runs as a role that cannot delete anything.
 - It ships as a distroless container with health and readiness probes, scheduled jobs that run from
-  the same image, and logs that never contain keys.
+  the same image, and logs that never contain keys. The image is built from base images pinned by
+  digest, scanned before it is published, and published with its bill of materials.
 
 ## Decisions
 
@@ -182,6 +183,27 @@ Nothing here needs the Postgres container, since the demo starts its own in the 
     npm run e2e
     npm run lighthouse
     ```
+
+### Check the image
+
+CI builds the image the service ships as on every run, from base images pinned by digest, and
+scans it along with the two lockfiles. A high or critical vulnerability with a fix available fails
+the build. One with no fix yet is reported and does not, since the fix is the next base image or
+release, and Dependabot opens that pull request. A finding that does not apply is accepted in
+`.trivyignore.yaml`, with the reason and a date the acceptance expires, so it is looked at again
+rather than kept forever. The acceptances there today cover Debian's OpenSSL in the runtime
+image, which nothing loads, because Node carries its own.
+
+A bill of materials is kept with every run, and each merge to main publishes the image to
+`ghcr.io/jasonsdevspace/inventory-reservations` with the bill of materials and a build provenance
+attestation attached, after the scan has passed.
+
+Run the same scan locally with [Trivy](https://trivy.dev/) installed.
+
+```bash
+docker build -t inventory-reservations:local .
+trivy image --severity HIGH,CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml inventory-reservations:local
+```
 
 ### Stop it
 

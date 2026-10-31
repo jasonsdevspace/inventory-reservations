@@ -165,6 +165,107 @@ jobs:
                   path: demo/dist
                   retention-days: 1
 
+    # The image the service ships as. It is built on every run, from base
+    # images pinned by digest, then scanned along with the two lockfiles: a
+    # high or critical vulnerability with a fix available fails the job, and
+    # the only way past that is an entry in .trivyignore.yaml with a reason
+    # and an expiry. One with no fix yet is reported and does not fail the
+    # job, since the fix is the next base image or release, which Dependabot
+    # brings. A software bill of materials is kept with every run, and on main
+    # the image is published to the GitHub container registry with a bill of
+    # materials and a build provenance attestation attached to it. The push
+    # comes after the scan, so an image that fails the scan is never published.
+    image:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        env:
+            IMAGE: ghcr.io/${{ github.repository }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+            - name: Build the image
+              uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+              with:
+                  context: .
+                  load: true
+                  tags: ${{ env.IMAGE }}:ci
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            # Dev dependencies are included on purpose. They never reach the
+            # image, but they run on every laptop and in this job.
+            - name: Scan the dependencies
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+
+            - name: Scan the image
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}:ci
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            - name: Write the bill of materials
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}:ci
+                  format: cyclonedx
+                  output: sbom.cdx.json
+                  skip-setup-trivy: true
+
+            - name: Keep the bill of materials
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: sbom
+                  path: sbom.cdx.json
+                  retention-days: 30
+
+            - name: Sign in to the registry
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # The same build, from the cache the scan's build filled, with the
+            # attestations the registry can hold and a local load cannot.
+            - name: Publish the image
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+              with:
+                  context: .
+                  push: true
+                  tags: |
+                      ${{ env.IMAGE }}:main
+                      ${{ env.IMAGE }}:sha-${{ github.sha }}
+                  cache-from: type=gha
+                  sbom: true
+                  provenance: mode=max
+
     # The browser demo, published to GitHub Pages at /inventory-reservations/
     # once everything above has passed on main. A merge that fails a check,
     # including the tests against Postgres, the browser tests and the
