@@ -184,13 +184,16 @@
                     <p>
                         The service is TypeScript on Node with Postgres behind it, and it ships as a
                         distroless container with health and readiness probes and scheduled jobs
-                        that run from the same image. The ledger is append-only, enforced by a
-                        database trigger, available stock is derived on every read, and orders for
-                        one product queue on a row lock. That choice was measured rather than
-                        assumed: with 32 buyers on one product, row locking held about 700 orders a
-                        second with the slowest 1% at 56 ms and none refused, where serializable
-                        transactions fell to about 320 a second with the slowest 1% at 584 ms and
-                        some refused once retries ran out.
+                        that run from the same image. The image is built from base images pinned by
+                        digest. CI scans it and the lockfiles for known vulnerabilities, and fails
+                        on any high or critical one that has a fix. The published image carries a
+                        bill of materials and a record of how it was built. The ledger is
+                        append-only, enforced by a database trigger, available stock is derived on
+                        every read, and orders for one product queue on a row lock. That choice was
+                        measured rather than assumed: with 32 buyers on one product, row locking
+                        held about 700 orders a second with the slowest 1% at 56 ms and none
+                        refused, where serializable transactions fell to about 320 a second with the
+                        slowest 1% at 584 ms and some refused once retries ran out.
                         <a href="../#benchmark">The demo charts those numbers.</a> Tenancy is
                         enforced twice, by the API key and by row level security, and the service
                         runs as a role that cannot delete anything. Every choice with a real

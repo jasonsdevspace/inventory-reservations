@@ -50,7 +50,8 @@ so when the warehouse count disagrees there is nothing to compare it with.
   runs as a role that cannot delete anything.
 - It ships as a distroless container with health and readiness probes, scheduled jobs that run from
   the same image, and logs that never contain keys. The image is built from base images pinned by
-  digest, scanned before it is published, and published with its bill of materials.
+  digest, scanned before it is published, and published with its bill of materials and build
+  provenance.
 
 ## Decisions
 
@@ -198,6 +199,11 @@ A bill of materials is kept with every run. On main the image is pushed with its
 and a build provenance attestation attached, and that pushed image is the one scanned. Once every
 check has passed it is tagged at `ghcr.io/jasonsdevspace/inventory-reservations`, so what is
 published is exactly what was scanned.
+
+Pushing a version tag such as `v0.5.0` releases that version. The release workflow checks the tag
+against `package.json` and [the changelog](CHANGELOG.md), runs every check again, gives the image
+CI already scanned for that commit the version as its tag, and creates a release on GitHub with the
+changelog entry as its notes and the bill of materials attached.
 
 Run the same scan locally with [Trivy](https://trivy.dev/) installed.
 

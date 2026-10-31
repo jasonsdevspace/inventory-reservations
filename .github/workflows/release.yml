@@ -1,0 +1,149 @@
+name: Release
+
+# Releases a version when a tag such as v0.5.0 is pushed. The tag has to
+# name a commit on main, match the version in package.json, and have an
+# entry in CHANGELOG.md, or nothing is released. Every check CI runs, runs
+# first, the image scan included, against the vulnerability data of the day.
+#
+# Nothing is rebuilt. The image CI pushed, scanned and tagged for that
+# commit when it merged is given the version as a further tag, so the
+# released image is the one that was scanned. Then a release on GitHub is
+# created with the changelog entry as its notes and the image's bill of
+# materials attached. A version with a hyphen is marked as a prerelease.
+on:
+    push:
+        tags:
+            - 'v*'
+
+permissions:
+    contents: read
+
+jobs:
+    # The cheap checks first, so a mistyped tag fails in seconds.
+    agree:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+            prerelease: ${{ steps.version.outputs.prerelease }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+                  fetch-depth: 0
+
+            # The tag names the version, the package declares it, and the
+            # changelog explains it. All three have to agree, and the commit
+            # has to be on main, so nothing unreviewed is ever released.
+            - name: Check the tag, the version, the changelog and the branch agree
+              id: version
+              env:
+                  TAG: ${{ github.ref_name }}
+              run: |
+                  version="${TAG#v}"
+                  declared=$(node -p "require('./package.json').version")
+                  if [ "$version" != "$declared" ]; then
+                      echo "the tag says $version but package.json says $declared"
+                      exit 1
+                  fi
+                  if ! grep -qxF -- "## $version" CHANGELOG.md; then
+                      echo "CHANGELOG.md has no entry for $version"
+                      exit 1
+                  fi
+                  if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+                      echo "the tagged commit is not on main"
+                      exit 1
+                  fi
+                  echo "version=$version" >> "$GITHUB_OUTPUT"
+                  case "$version" in
+                      *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+                      *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+                  esac
+
+    # A called workflow may ask for no more than its caller grants. CI's
+    # image, publish and deploy jobs ask for these even though only the
+    # image job's scan runs on a tag, so they are granted here or the run
+    # fails at startup.
+    checks:
+        needs: agree
+        uses: ./.github/workflows/ci.yml
+        permissions:
+            contents: read
+            packages: write
+            pages: write
+            id-token: write
+
+    release:
+        needs: [agree, checks]
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            packages: write
+        env:
+            VERSION: ${{ needs.agree.outputs.version }}
+            PRERELEASE: ${{ needs.agree.outputs.prerelease }}
+            TAG: ${{ github.ref_name }}
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # A registry reference has to be lowercase, and an owner's name
+            # need not be.
+            - name: Name the image
+              run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+            - name: Sign in to the registry
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Set up Buildx
+              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+            # CI tags each commit's image once every check on main has
+            # passed. A tag pushed before that run finishes finds nothing,
+            # and the run can be repeated once it has.
+            - name: Name the scanned image with the version
+              run: |
+                  if ! docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" >/dev/null; then
+                      echo "no image for $GITHUB_SHA yet, wait for CI on main to finish and run this again"
+                      exit 1
+                  fi
+                  docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"
+
+            - name: Write the bill of materials
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}:${{ env.VERSION }}
+                  format: cyclonedx
+                  output: sbom.cdx.json
+
+            # Left alone if it exists, so a run can be repeated after a
+            # later step failed.
+            - name: Create the GitHub release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  if gh release view "$TAG" >/dev/null 2>&1; then
+                      echo "the release for $TAG exists"
+                      exit 0
+                  fi
+                  awk -v v="$VERSION" '
+                      $0 == "## " v { on = 1; next }
+                      on && /^## / { exit }
+                      on && (printed || NF) { print; printed = 1 }
+                  ' CHANGELOG.md > notes.md
+                  if ! grep -q . notes.md; then
+                      echo "the changelog entry for $VERSION is empty"
+                      exit 1
+                  fi
+                  flags=""
+                  [ "$PRERELEASE" = "true" ] && flags="--prerelease"
+                  gh release create "$TAG" --title "inventory-reservations $VERSION" \
+                      --notes-file notes.md $flags \
+                      "sbom.cdx.json#Bill of materials (CycloneDX)"
