@@ -174,7 +174,8 @@ The tests use the Postgres container started above, so leave it running.
     npm ci
     ```
 
-2. Run every check CI runs: type checking, linting, formatting, a prose check and the tests.
+2. Run every check CI runs: type checking, linting, formatting, a prose check, a check that
+   everything names the Node version in `.nvmrc`, and the tests.
 
     ```bash
     npm run verify
