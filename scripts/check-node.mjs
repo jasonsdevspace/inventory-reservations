@@ -33,7 +33,9 @@ import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const VERSION_FILES = new Set(['.nvmrc', '.node-version', '.tool-versions']);
+/** @param {string} name */
 const isDockerfile = (name) => /^Dockerfile(\..+)?$/.test(name) || name.endsWith('.Dockerfile');
+/** @param {string} path */
 const isActionsFile = (path) =>
     /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path) ||
     /^\.github\/actions\/.+\/action\.ya?ml$/.test(path);
@@ -188,7 +190,7 @@ const checkImage = (image, major) => {
     const tag = match[2];
     if (tag === undefined || !/^\d+/.test(tag))
         return 'uses a Node image whose tag does not name a major';
-    return Number(/^(\d+)/.exec(tag)[1]) === major
+    return Number(/^(\d+)/.exec(tag)?.[1]) === major
         ? undefined
         : 'uses a Node image of another major';
 };
@@ -206,10 +208,11 @@ const checkActionsLine = (code, major) => {
         problems.push('names its own Node version, read node-version-file: .nvmrc instead');
     }
     const image = /^\s*-?\s*(?:image|container|uses):\s*['"]?((?:docker:\/\/)?[^'"\s]+)/.exec(code);
+    const named = image?.[1];
     const isImage =
-        image !== null && (!/^\s*-?\s*uses:/.test(code) || image[1].startsWith('docker://'));
-    const wrong = isImage ? checkImage(image[1], major) : undefined;
-    if (wrong) problems.push(`${wrong} (${image[1]})`);
+        named !== undefined && (!/^\s*-?\s*uses:/.test(code) || named.startsWith('docker://'));
+    const wrong = isImage ? checkImage(named, major) : undefined;
+    if (wrong) problems.push(`${wrong} (${String(named)})`);
     const runtime = /^\s*using:\s*['"]?node(\d+)/.exec(code);
     if (runtime && Number(runtime[1]) !== major)
         problems.push(`runs an action on Node ${runtime[1]}`);
@@ -224,9 +227,9 @@ const checkActionsLine = (code, major) => {
  * @returns {string[]}
  */
 const checkDockerLine = (code, major) => {
-    const from = /^\s*FROM\s+(?:--\S+\s+)*(\S+)/i.exec(code);
-    const wrong = from ? checkImage(from[1], major) : undefined;
-    return wrong ? [`${wrong} (${from[1]})`] : [];
+    const image = /^\s*FROM\s+(?:--\S+\s+)*(\S+)/i.exec(code)?.[1];
+    const wrong = image === undefined ? undefined : checkImage(image, major);
+    return wrong ? [`${wrong} (${String(image)})`] : [];
 };
 
 /**
@@ -250,7 +253,9 @@ const checkReadmeLine = (line, major) =>
  * @returns {{ code: string, number: number }[]}
  */
 const logicalLines = (text) => {
+    /** @type {{ code: string, number: number }[]} */
     const lines = [];
+    /** @type {{ code: string, number: number } | undefined} */
     let pending;
     text.split('\n').forEach((raw, index) => {
         const code = raw.replace(/^\s*#.*$/, '');
@@ -278,6 +283,7 @@ const logicalLines = (text) => {
  */
 const checkText = (path, text, major) => {
     const name = basename(path);
+    /** @type {(problems: string[], number: number) => string[]} */
     const at = (problems, number) => problems.map((say) => `${path}:${number}: ${say}`);
     if (isActionsFile(path))
         return logicalLines(text).flatMap(({ code, number }) =>
@@ -311,11 +317,20 @@ const checkVersionFile = (path, text, major) => {
         : [`${path}: names Node ${named}, expected ${major}`];
 };
 
+/**
+ * A JSON file's value, or what is wrong with it.
+ *
+ * @param {string} path
+ * @param {string} text
+ * @returns {{ value?: any, problem?: string }}
+ */
 const parse = (path, text) => {
     try {
         return { value: JSON.parse(text) };
     } catch (error) {
-        return { problem: `${path}: is not valid JSON (${error.message})` };
+        return {
+            problem: `${path}: is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+        };
     }
 };
 
@@ -374,6 +389,7 @@ export const nodeMismatches = (files) => {
     ];
 };
 
+/** @param {string} path */
 const WATCHED = (path) => {
     const name = basename(path);
     return (

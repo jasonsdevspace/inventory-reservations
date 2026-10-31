@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { nodeMismatches } from '../scripts/check-node.mjs';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+
+import { nodeMismatches } from './check-node.mjs';
 
 const ROOT = JSON.stringify({
     private: true,
@@ -281,5 +287,62 @@ describe('the Node version check', () => {
             'README.md:4: tells a reader Node 16',
             'README.md:5: tells a reader Node 14',
         ]);
+    });
+
+    it('takes the files by path and gives back one line per problem', () => {
+        expectTypeOf(nodeMismatches).toEqualTypeOf<(files: Map<string, string>) => string[]>();
+    });
+});
+
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'check-node.mjs');
+
+/**
+ * A throwaway repository holding the files given, with the script copied in,
+ * run from a folder below the top, as a contributor might.
+ */
+const runIn = (
+    files: Record<string, string>
+): { status: number | null; stdout: string; stderr: string } => {
+    const root = mkdtempSync(join(tmpdir(), 'check-node-'));
+    try {
+        execFileSync('git', ['init', '--quiet'], { cwd: root });
+        for (const [path, text] of Object.entries({ ...files, 'scripts/check-node.mjs': '' })) {
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), text);
+        }
+        copyFileSync(SCRIPT, join(root, 'scripts/check-node.mjs'));
+        const result = spawnSync('node', ['check-node.mjs'], {
+            cwd: join(root, 'scripts'),
+            encoding: 'utf8',
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+};
+
+const CLEAN = {
+    '.nvmrc': '24\n',
+    'package.json': ROOT,
+    'package-lock.json': LOCK,
+};
+
+describe('the Node version check, run as a command', () => {
+    it('passes in a repository that names one major everywhere', () => {
+        const result = runIn(CLEAN);
+        expect(result.stderr).toBe('');
+        expect(result.stdout).toBe('Node version check passed. Everything names Node 24.\n');
+        expect(result.status).toBe(0);
+    });
+
+    it('fails with each problem, reading files git has not been told about yet', () => {
+        const result = runIn({
+            ...CLEAN,
+            '.github/actions/node/action.yaml': "runs:\n  using: 'node20'\n",
+        });
+        expect(result.stderr).toBe(
+            'Node version check failed.\n\n.github/actions/node/action.yaml:2: runs an action on Node 20\n'
+        );
+        expect(result.status).toBe(1);
     });
 });
