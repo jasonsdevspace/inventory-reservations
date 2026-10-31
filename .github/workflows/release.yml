@@ -62,11 +62,6 @@ jobs:
                       *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
                   esac
 
-            # CI tags an image with its commit only when that commit was
-            # pushed to main and every check passed, so the image standing
-            # for the tagged commit is the proof that it was reviewed and
-            # checked. A version tag already in use has to point at that
-            # same image, so a version is never moved to different bytes.
             - name: Name the image
               run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
@@ -77,6 +72,12 @@ jobs:
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
+            # CI tags an image with its commit only when that commit was
+            # pushed to main and every check passed, so the image standing
+            # for the tagged commit is the proof that it was reviewed and
+            # checked. A version tag already in use has to point at that
+            # same image, so a version is never moved to different bytes.
+            #
             # A tag the registry does not have prints nothing, so the step can
             # ask whether a version is free. Any other failure stops the run.
             - name: Find the image CI published for the commit
@@ -88,7 +89,7 @@ jobs:
                       if docker buildx imagetools inspect "$IMAGE:$1" --format '{{.Manifest.Digest}}' 2> inspect-error; then
                           return
                       fi
-                      grep -q ': not found' inspect-error || { cat inspect-error >&2; return 1; }
+                      grep -qxF "ERROR: $IMAGE:$1: not found" inspect-error || { cat inspect-error >&2; return 1; }
                   }
                   digest=$(digest_of "sha-$GITHUB_SHA")
                   if [ -z "$digest" ]; then
@@ -154,7 +155,7 @@ jobs:
             # rather than a second one made now, so there is one list.
             - name: Fetch the bill of materials
               run: |
-                  docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .SBOM.SPDX}}' > sbom.spdx.json
+                  docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .SBOM.SPDX}}' > sbom.spdx.json
                   if [ "$(head -c 4 sbom.spdx.json)" = "null" ] || [ ! -s sbom.spdx.json ]; then
                       echo "the image at $VERSION carries no SPDX bill of materials"
                       exit 1

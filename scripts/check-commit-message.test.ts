@@ -19,6 +19,12 @@ describe('the commit message check', () => {
         expect(messageProblems('Fix\n\nCo-authored-by: helper bot <a@b.c>')).toHaveLength(1);
     });
 
+    it('leaves quoted code and entities alone', () => {
+        expect(
+            messageProblems('Run `a; b` before the build, and write it as &amp; in the header')
+        ).toEqual([]);
+    });
+
     it('refuses an em dash and a semicolon joining clauses', () => {
         expect(messageProblems(`Fix the floor ${DASH} and the job; then ship`)).toEqual([
             'uses an em dash',
@@ -37,5 +43,8 @@ describe('the commit message check', () => {
         ].join('\n');
         expect(storedMessage(raw, '#')).toBe('Fix the check');
         expect(storedMessage('Fix\n; a comment in another style', ';')).toBe('Fix');
+        const auto =
+            'Fix\n# a heading the author wrote\n; ------------------------ >8 ------------------------\n+claude; diff';
+        expect(storedMessage(auto, '#')).toBe('Fix\n# a heading the author wrote');
     });
 });

@@ -17,10 +17,9 @@
  *
  * Run with `npm run prose`.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname, extname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, extname } from 'node:path';
+
+import { isRunDirectly, repositoryFiles } from './repository.mjs';
 
 const SCANNED = new Set([
     '.ts',
@@ -69,16 +68,35 @@ const BRITISH_SPELLINGS = new RegExp(
 /** @typedef {{ index: number, text: string }} Segment */
 
 /**
- * Comment text only, so statement semicolons are never considered.
+ * How a comment starts, by the kind of file. A `#` starts one in a workflow,
+ * a shell script or a Dockerfile, but in JavaScript it starts a private
+ * field, so it is not read there.
  *
+ * @param {string} path
+ * @returns {string}
+ */
+const commentStart = (path) => {
+    const ext = extname(path);
+    if (ext === '.sql') return '--';
+    if (['.yml', '.yaml', '.sh'].includes(ext) || SCANNED_NAMES.has(basename(path))) return '#';
+    return '\\/\\/|\\{?\\/\\*+|\\*(?!\\/)';
+};
+
+/**
+ * Comment text only, so statement semicolons are never considered. A
+ * comment that closes on its line ends there, so code after it is left alone.
+ *
+ * @param {string} path
  * @param {string} source
  * @returns {Segment[]}
  */
-const commentsOf = (source) =>
-    source.split('\n').flatMap((line, index) => {
-        const text = /^\s*(?:\/\/|#|--|\{?\/\*+|\*(?!\/))\s?(.*?)(?:\*\/\}?)?$/.exec(line)?.[1];
+const commentsOf = (path, source) => {
+    const comment = new RegExp(`^\\s*(?:${commentStart(path)})\\s?(.*?)(?:\\*\\/.*)?$`);
+    return source.split('\n').flatMap((line, index) => {
+        const text = comment.exec(line)?.[1];
         return text === undefined ? [] : [{ index, text }];
     });
+};
 
 /**
  * Markdown body text, with fenced blocks, inline code and entities removed.
@@ -99,19 +117,35 @@ const proseOf = (source) => {
     });
 };
 
+/** Attributes whose words a visitor reads or hears. */
+const READ_ATTRIBUTES = /\b(?:alt|title|aria-label|aria-description|placeholder)\s*=\s*"([^"]*)"/gi;
+
+/** A meta tag whose content is shown as the page's description or title. */
+const SHOWN_META =
+    /<meta\s[^>]*\b(?:name|property)="(?:description|og:description|og:title|twitter:description)"[^>]*>/i;
+
 /**
  * A page's text and its comments, line by line. Scripts and styles are code,
- * so they are blanked, and tags are blanked with their line breaks kept so the
- * line numbers still match. A comment's own text is kept, since it is prose.
+ * so they are blanked, and a block left open runs to the end of the page, as
+ * a browser reads it. A tag gives way to the words in the attributes a
+ * visitor reads, and otherwise to nothing, so a semicolon after a link still
+ * sits beside the word before it. Line breaks are kept so line numbers match.
  *
  * @param {string} source
  * @returns {Segment[]}
  */
 const pageTextOf = (source) =>
     source
-        .replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, (block) => block.replace(/[^\n]/g, ' '))
-        .replace(/<!--|-->/g, '    ')
-        .replace(/<[^>]*>/g, (tag) => tag.replace(/[^\n]/g, ' '))
+        .replace(/<(script|style)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, (block) =>
+            block.replace(/[^\n]/g, '')
+        )
+        .replace(/<!--|-->/g, ' ')
+        .replace(/<[^>]*>/g, (tag) => {
+            const read = [...tag.matchAll(READ_ATTRIBUTES)].map((attribute) => attribute[1]);
+            if (SHOWN_META.test(tag)) read.push(/\bcontent="([^"]*)"/i.exec(tag)?.[1] ?? '');
+            const breaks = tag.replace(/[^\n]/g, '');
+            return read.length === 0 ? breaks : ` ${read.join(' ')} ${breaks}`;
+        })
         .split('\n')
         .map((line, index) => ({ index, text: line.replace(/&[a-z]+;/gi, '') }));
 
@@ -130,6 +164,9 @@ export const problemsIn = (text, { issues }) =>
         BRITISH_SPELLINGS.test(text) && 'British spelling',
     ].filter((rule) => typeof rule === 'string');
 
+/** @param {string} path */
+const isScanned = (path) => SCANNED.has(extname(path)) || SCANNED_NAMES.has(basename(path));
+
 /**
  * Every problem in one file, as `path:line  rule` with the line beneath.
  *
@@ -137,18 +174,19 @@ export const problemsIn = (text, { issues }) =>
  * @param {string} source
  * @returns {string[]}
  */
-export const proseProblems = (path, source) => {
+
+export const proseProblems = (path, source, label = path) => {
     const ext = extname(path);
-    if (!SCANNED.has(ext) && !SCANNED_NAMES.has(basename(path))) return [];
+    if (!isScanned(path)) return [];
     const isMarkdown = ext === '.md';
     const segments = isMarkdown
         ? proseOf(source)
         : ext === '.html'
           ? pageTextOf(source)
-          : commentsOf(source);
+          : commentsOf(path, source);
     /** @type {(index: number, rule: string, text: string) => string} */
     const report = (index, rule, text) =>
-        `${path}:${index + 1}  ${rule}\n    ${text.trim().slice(0, 100)}`;
+        `${label}:${index + 1}  ${rule}\n    ${text.trim().slice(0, 100)}`;
     return [
         ...source
             .split('\n')
@@ -162,39 +200,17 @@ export const proseProblems = (path, source) => {
 };
 
 const main = () => {
-    // From the top of this script's repository, over tracked files and new
-    // ones not yet added, so whatever the repository ignores is skipped too.
-    const here = dirname(fileURLToPath(import.meta.url));
-    process.chdir(
-        execFileSync('git', ['rev-parse', '--show-toplevel'], {
-            cwd: here,
-            encoding: 'utf8',
-        }).trim()
+    const failures = [...repositoryFiles(import.meta.url, isScanned)].flatMap(([path, source]) =>
+        proseProblems(path, source)
     );
-    const listed = execFileSync(
-        'git',
-        ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-        {
-            encoding: 'utf8',
-            maxBuffer: 64 * 1024 * 1024,
-        }
-    ).split('\0');
-    const failures = [...new Set(listed)]
-        .filter((path) => path !== '' && existsSync(path))
-        .flatMap((path) => proseProblems(path, readFileSync(path, 'utf8')));
     if (failures.length > 0) {
         console.error(`Prose check failed with ${failures.length} problem(s):\n`);
         console.error(failures.join('\n'));
         process.exit(1);
     }
     console.log(
-        'Prose check passed. No em dashes, prose semicolons, process artifacts or British spellings.'
+        'Prose check passed. No em dashes, prose semicolons, process artifacts, issue numbers or British spellings.'
     );
 };
 
-// Compared by real path, so a checkout reached through a symlink still runs.
-if (
-    process.argv[1] !== undefined &&
-    realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
-)
-    main();
+if (isRunDirectly(import.meta.url)) main();

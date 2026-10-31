@@ -9,17 +9,24 @@
  *   package admits that major and no other, so npm warns anyone installing on
  *   another. A published package starts at or below it with no upper bound,
  *   since the people using it choose their own Node.
- * - `@types/node`, which should describe the runtime that runs.
+ * - `@types/node`, where it is declared or overridden, which should describe
+ *   the runtime that runs.
  * - A workflow that names its own `node-version` instead of reading the file.
- * - A Dockerfile's Node images.
+ * - A Dockerfile's Node images, by any of its usual names.
  * - The root README, which tells a contributor which Node to install.
  *
  * Run with `npm run node-check`.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename } from 'node:path';
+
+import { isRunDirectly, repositoryFiles } from './repository.mjs';
+
+/**
+ * A Dockerfile by any of the names Docker tooling uses for one.
+ *
+ * @param {string} path
+ */
+const isDockerfile = (path) => /^Dockerfile(\..+)?$|\.Dockerfile$/.test(basename(path));
 
 /**
  * The parts of a package.json this reads, each `unknown` until looked at.
@@ -29,20 +36,21 @@ import { fileURLToPath } from 'node:url';
  *     engines?: { node?: unknown },
  *     dependencies?: Record<string, unknown>,
  *     devDependencies?: Record<string, unknown>,
+ *     overrides?: Record<string, unknown>,
  * }} PackageJson
  */
 
 /**
  * The majors a range admits, as the first and the first one past it. Only the
- * forms written here are understood: `>=N`, `>=N <M`, `^N`, `~N` and `N`, each
- * with or without minor and patch numbers.
+ * forms written here are understood: `>=N`, `>=N <M`, `^N`, `~N`, `N` and
+ * `N.x`, each with or without minor and patch numbers.
  *
  * @param {unknown} range
  * @returns {{ from: number, below: number | undefined } | undefined}
  */
 const majorsOf = (range) => {
     if (typeof range !== 'string') return undefined;
-    const pinned = /^[\^~]?(\d+)(?:\.\d+){0,2}$/.exec(range.trim());
+    const pinned = /^[\^~]?(\d+)(?:\.(?:\d+|x)){0,2}$/.exec(range.trim());
     if (pinned) return { from: Number(pinned[1]), below: Number(pinned[1]) + 1 };
     const span = /^>=\s*(\d+)(?:\.\d+){0,2}(?:\s+<\s*(\d+)(?:\.0){0,2})?$/.exec(range.trim());
     if (span)
@@ -89,9 +97,9 @@ const checkEngines = (path, pkg, major) => {
  * @returns {string[]}
  */
 const checkPackage = (path, pkg, major) => {
-    const types = [pkg.dependencies?.['@types/node'], pkg.devDependencies?.['@types/node']].filter(
-        (range) => range !== undefined
-    );
+    const types = [pkg.dependencies, pkg.devDependencies, pkg.overrides]
+        .map((field) => field?.['@types/node'])
+        .filter((range) => range !== undefined);
     return [
         ...checkEngines(path, pkg, major),
         ...types
@@ -103,6 +111,23 @@ const checkPackage = (path, pkg, major) => {
                     `${path}: @types/node is ${JSON.stringify(range)}, expected Node ${major}`
             ),
     ];
+};
+
+/**
+ * The Node major an image runs, if it is a Node image. `node` and `nodejs`
+ * take it from the tag, and a distroless or vendor image such as `nodejs24` or
+ * `nodejs-20` from its name. A Node image pinned by digest alone names none.
+ *
+ * @param {string} image
+ * @returns {{ major: number | undefined } | undefined}
+ */
+const nodeImage = (image) => {
+    const [name = '', tag] = (image.split('/').pop() ?? '').split('@')[0]?.split(':') ?? [];
+    const named = /^nodejs-?(\d+)/.exec(name);
+    if (named) return { major: Number(named[1]) };
+    if (name !== 'node' && name !== 'nodejs') return undefined;
+    const tagged = /^(\d+)/.exec(tag ?? '');
+    return { major: tagged ? Number(tagged[1]) : undefined };
 };
 
 /**
@@ -124,14 +149,14 @@ const checkText = (path, text, major) =>
                 ? [`${at}: names its own Node version, read node-version-file: .nvmrc instead`]
                 : [];
         }
-        if (basename(path) === 'Dockerfile') {
-            const image = /^\s*FROM\s+(?:--\S+\s+)*(\S+)/i.exec(code)?.[1] ?? '';
-            const named = /(?:^|\/)(?:node:(\d+)|nodejs(\d+))/.exec(image);
-            if (/(?:^|\/)node(?:js)?(?::|\d|$)/.test(image) && named === null) {
+        if (isDockerfile(path)) {
+            const image = /^\s*FROM\s+(?:--\S+\s+)*(\S+)/i.exec(code)?.[1];
+            const node = image === undefined ? undefined : nodeImage(image);
+            if (node === undefined) return [];
+            if (node.major === undefined) {
                 return [`${at}: uses a Node image whose tag does not name a major (${image})`];
             }
-            const used = Number(named?.[1] ?? named?.[2] ?? major);
-            return used === major ? [] : [`${at}: uses Node ${used} (${image})`];
+            return node.major === major ? [] : [`${at}: uses Node ${node.major} (${image})`];
         }
         if (path !== 'README.md') return [];
         return [...line.matchAll(/\bNode(?:\.js)?\]?(?:\([^)]*\))?\s+(?:>=?\s*)?v?(\d+)\b/g)]
@@ -164,31 +189,13 @@ export const nodeMismatches = (files) => {
 /** @param {string} path */
 const watched = (path) =>
     basename(path) === 'package.json' ||
-    basename(path) === 'Dockerfile' ||
+    isDockerfile(path) ||
     path === '.nvmrc' ||
     path === 'README.md' ||
     /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path);
 
 const main = () => {
-    // From the top of this script's repository, wherever it is started, and
-    // over tracked files and new ones not yet added.
-    const here = dirname(fileURLToPath(import.meta.url));
-    process.chdir(
-        execFileSync('git', ['rev-parse', '--show-toplevel'], {
-            cwd: here,
-            encoding: 'utf8',
-        }).trim()
-    );
-    const listed = execFileSync(
-        'git',
-        ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-        {
-            encoding: 'utf8',
-            maxBuffer: 64 * 1024 * 1024,
-        }
-    ).split('\0');
-    const paths = [...new Set(listed)].filter((path) => watched(path) && existsSync(path));
-    const files = new Map(paths.map((path) => [path, readFileSync(path, 'utf8')]));
+    const files = repositoryFiles(import.meta.url, watched);
     const problems = nodeMismatches(files);
     if (problems.length > 0) {
         console.error(`Node version check failed.\n\n${problems.join('\n')}`);
@@ -197,9 +204,4 @@ const main = () => {
     console.log(`Node version check passed. Everything names Node ${files.get('.nvmrc')?.trim()}.`);
 };
 
-// Compared by real path, so a checkout reached through a symlink still runs.
-if (
-    process.argv[1] !== undefined &&
-    realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
-)
-    main();
+if (isRunDirectly(import.meta.url)) main();

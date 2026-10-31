@@ -118,9 +118,36 @@ describe('the Node version check', () => {
             )
         ).toEqual(['README.md:1: tells a reader Node 22']);
     });
+
+    it('reads the other ways a range, a Dockerfile and the Node types are written', () => {
+        for (const node of ['24.x', '>=24.0.0 <25.0.0']) {
+            expect(
+                nodeMismatches(repo({ 'package.json': pkg({ private: true, engines: { node } }) }))
+            ).toEqual([]);
+        }
+        expect(
+            nodeMismatches(
+                repo({
+                    Dockerfile:
+                        'FROM node@sha256:abc\nFROM ubi9/nodejs-20\nFROM nodejs:24\nFROM nodemon:3\n',
+                })
+            )
+        ).toEqual([
+            'Dockerfile:1: uses a Node image whose tag does not name a major (node@sha256:abc)',
+            'Dockerfile:2: uses Node 20 (ubi9/nodejs-20)',
+        ]);
+        expect(nodeMismatches(repo({ 'docker/Dockerfile.prod': 'FROM node:20-alpine\n' }))).toEqual(
+            ['docker/Dockerfile.prod:1: uses Node 20 (node:20-alpine)']
+        );
+        expect(
+            nodeMismatches(
+                repo({ 'demo/package.json': pkg({ overrides: { '@types/node': '26.0.0' } }) })
+            )
+        ).toHaveLength(1);
+    });
 });
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'check-node.mjs');
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** The parent's environment, without anything that points git elsewhere or reads the user's config. */
 const isolated = (): NodeJS.ProcessEnv => ({
@@ -148,7 +175,9 @@ const runIn = (tracked: Record<string, string>, untracked: Record<string, string
         execFileSync('git', ['add', '--all'], options);
         write(untracked);
         mkdirSync(join(root, 'scripts'), { recursive: true });
-        copyFileSync(SCRIPT, join(root, 'scripts/check-node.mjs'));
+        for (const script of ['check-node.mjs', 'repository.mjs']) {
+            copyFileSync(join(HERE, script), join(root, 'scripts', script));
+        }
         const result = spawnSync(process.execPath, ['check-node.mjs'], {
             ...options,
             cwd: join(root, 'scripts'),

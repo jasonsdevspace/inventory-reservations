@@ -17,6 +17,12 @@ describe('the prose check', () => {
         ]);
     });
 
+    it('stops a comment where it closes, so the code after it is left alone', () => {
+        expect(rules('a.mjs', '/** @type {string} */ const a = b;\n/* one; two */ x();\n')).toEqual(
+            ['a.mjs:2  semicolon in prose']
+        );
+    });
+
     it('reads every rule it lists', () => {
         expect(
             rules(
@@ -45,6 +51,26 @@ describe('the prose check', () => {
             'index.html:1  semicolon in prose',
             'index.html:4  British spelling',
         ]);
+        expect(rules('end.html', '<p>ok</p>\n<script src="x.js">\nconst a = b;\n')).toEqual([]);
+    });
+
+    it('reads a semicolon after a link, and the words a visitor reads in attributes', () => {
+        const page = [
+            '<p>See <a href="/x">the docs</a>; then go.</p>',
+            '<img alt="The colour wheel" src="a.png">',
+            '<meta name="description" content="One clause; another">',
+            '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">',
+        ].join('\n');
+        expect(rules('index.html', page)).toEqual([
+            'index.html:1  semicolon in prose',
+            'index.html:2  British spelling',
+            'index.html:3  semicolon in prose',
+        ]);
+    });
+
+    it('takes a hash as a comment only where it starts one', () => {
+        expect(rules('a.tsx', 'class A {\n    #timer;\n}\n')).toEqual([]);
+        expect(rules('a.sh', '# one; two\n')).toEqual(['a.sh:1  semicolon in prose']);
     });
 
     it('reads workflow and Dockerfile comments, and skips what it does not scan', () => {

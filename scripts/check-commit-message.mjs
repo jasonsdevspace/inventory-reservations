@@ -9,8 +9,9 @@
  * hook with the path to the message file.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+
+import { isRunDirectly } from './repository.mjs';
 
 const TOOLS = [
     /\bclaude\b/i,
@@ -31,6 +32,8 @@ const EM_DASH = String.fromCodePoint(0x2014);
 /**
  * The message git will store: everything above the scissors line that
  * `git commit -v` adds before the diff, without git's own comment lines.
+ * The scissors line is found by its shape, whatever comment character git
+ * chose, since with `core.commentChar` set to `auto` it picks one per commit.
  *
  * @param {string} raw
  * @param {string} commentChar
@@ -38,11 +41,10 @@ const EM_DASH = String.fromCodePoint(0x2014);
  */
 export const storedMessage = (raw, commentChar) => {
     const lines = raw.split('\n');
-    const scissors = lines.findIndex(
-        (line) => line.startsWith(`${commentChar} -`) && line.includes('>8')
-    );
+    const scissors = lines.findIndex((line) => /^\S -{24} >8 -{24}$/.test(line));
+    const comment = scissors === -1 ? commentChar : (lines[scissors]?.[0] ?? commentChar);
     return (scissors === -1 ? lines : lines.slice(0, scissors))
-        .filter((line) => !line.startsWith(commentChar))
+        .filter((line) => !line.startsWith(comment))
         .join('\n');
 };
 
@@ -57,7 +59,10 @@ export const messageProblems = (message) => [
         (pattern) => `names a tool (${String(pattern)})`
     ),
     ...(message.includes(EM_DASH) ? ['uses an em dash'] : []),
-    ...(/[A-Za-z];/.test(message) ? ['joins clauses with a semicolon'] : []),
+    // Quoted code and entities are not prose, as in the prose check.
+    ...(/[A-Za-z];/.test(message.replace(/`[^`]*`/g, '').replace(/&[a-z]+;/gi, ''))
+        ? ['joins clauses with a semicolon']
+        : []),
 ];
 
 /** The comment character git uses for this repository, `#` unless set otherwise. */
@@ -89,9 +94,4 @@ const main = () => {
     }
 };
 
-// Compared by real path, so a checkout reached through a symlink still runs.
-if (
-    process.argv[1] !== undefined &&
-    realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
-)
-    main();
+if (isRunDirectly(import.meta.url)) main();
