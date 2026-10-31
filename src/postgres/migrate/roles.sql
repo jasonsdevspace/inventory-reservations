@@ -45,6 +45,12 @@ $$;
 
 grant usage on schema public to reservations_app;
 
+-- No creating in the schema, said here rather than left to the server's
+-- default, which older servers and clusters upgraded in place still grant to
+-- everyone. The service's inability to add a table or a function is a line
+-- in this file, not a property of the Postgres it happens to run on.
+revoke create on schema public from public;
+
 -- What the application may do.
 --
 -- No delete anywhere, which makes the append only property a privilege rather
@@ -96,6 +102,8 @@ create policy idempotency_tenant_isolation on idempotency_keys
     using (merchant_id = current_setting('app.merchant_id', true))
     with check (merchant_id = current_setting('app.merchant_id', true));
 
--- Merchants are readable by the application because a key has to be looked up
--- before there is a merchant to scope by. The row returned is the one whose
--- key hash was presented, and nothing else about it is exposed.
+-- Merchants are readable in full by the application, with no policy, for two
+-- reasons. A key has to be looked up before there is a merchant to scope by.
+-- And the hold sweeper and reconciliation walk every merchant before any
+-- tenancy exists, as the service role. What the table holds is each
+-- merchant's id and the hash of its key, never the key.

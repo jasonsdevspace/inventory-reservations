@@ -67,8 +67,9 @@ Each record names the option it rejected and what the choice costs.
 5. [Reconciliation detects, and does not repair](docs/decisions/0005-reconciliation-detects-but-does-not-repair.md).
    An automatic fix would guess, and write a second mistake over the first.
 6. [Tenancy is enforced twice: in the query, and again by Postgres](docs/decisions/0006-tenancy-with-row-level-security.md).
-   A query that forgets its merchant sees nothing rather than everything, and the service runs as
-   a role that can never delete, at the cost of one setting per transaction.
+   A query that forgets its filter sees one merchant's rows and one with no merchant sees none,
+   never everything, and the service runs as a role that can never delete, at the cost of one
+   setting per transaction.
 
 <details>
 <summary><b>Where a stale answer is acceptable</b>, and where it is not</summary>
