@@ -27,7 +27,7 @@ export default defineConfig({
     optimizeDeps: { exclude: ['@electric-sql/pglite'] },
     build: {
         target: 'es2023',
-        rollupOptions: {
+        rolldownOptions: {
             input: {
                 main: fileURLToPath(new URL('./index.html', import.meta.url)),
                 about: fileURLToPath(new URL('./about/index.html', import.meta.url)),
