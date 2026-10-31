@@ -32,6 +32,29 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * The parts of a package.json this reads. Each value is `unknown` until a
+ * rule has looked at it, since the file is whatever someone wrote.
+ *
+ * @typedef {{
+ *     private?: unknown,
+ *     engines?: { node?: unknown },
+ *     volta?: { node?: unknown },
+ *     devEngines?: { runtime?: { version?: unknown } },
+ *     dependencies?: Record<string, unknown>,
+ *     devDependencies?: Record<string, unknown>,
+ *     overrides?: Record<string, unknown>,
+ *     peerDependencies?: Record<string, unknown>,
+ *     optionalDependencies?: Record<string, unknown>,
+ * }} PackageJson
+ */
+
+/**
+ * The part of a package-lock.json this reads.
+ *
+ * @typedef {{ packages?: Record<string, { engines?: { node?: unknown } } | null> | null }} PackageLock
+ */
+
 const VERSION_FILES = new Set(['.nvmrc', '.node-version', '.tool-versions']);
 /** @param {string} name */
 const isDockerfile = (name) => /^Dockerfile(\..+)?$/.test(name) || name.endsWith('.Dockerfile');
@@ -87,18 +110,18 @@ const checkEngines = (where, range, { major, bounded }) => {
  * What a package's Node types say, by where they are declared.
  *
  * @param {string} path
- * @param {Record<string, any>} pkg
+ * @param {PackageJson} pkg
  * @param {number} major
  * @returns {string[]}
  */
 const checkTypes = (path, pkg, major) =>
-    [
+    /** @type {const} */ ([
         'dependencies',
         'devDependencies',
         'overrides',
         'peerDependencies',
         'optionalDependencies',
-    ].flatMap((field) => {
+    ]).flatMap((field) => {
         const types = pkg[field]?.['@types/node'];
         // An override written as `$@types/node` points at the declared one.
         if (types === undefined || types === '$@types/node') return [];
@@ -118,7 +141,7 @@ const checkTypes = (path, pkg, major) =>
  * What one package.json says about Node.
  *
  * @param {string} path
- * @param {Record<string, any>} pkg
+ * @param {PackageJson} pkg
  * @param {number} major
  * @returns {string[]}
  */
@@ -150,8 +173,8 @@ const checkPackage = (path, pkg, major) => {
 /**
  * Every package's engines as the lockfile recorded them, against the package.
  *
- * @param {Record<string, any>} lock
- * @param {Map<string, Record<string, any>>} packages
+ * @param {PackageLock} lock
+ * @param {Map<string, PackageJson>} packages
  * @returns {string[]}
  */
 const checkLock = (lock, packages) => {
@@ -209,10 +232,10 @@ const checkActionsLine = (code, major) => {
     }
     const image = /^\s*-?\s*(?:image|container|uses):\s*['"]?((?:docker:\/\/)?[^'"\s]+)/.exec(code);
     const named = image?.[1];
-    const isImage =
-        named !== undefined && (!/^\s*-?\s*uses:/.test(code) || named.startsWith('docker://'));
-    const wrong = isImage ? checkImage(named, major) : undefined;
-    if (wrong) problems.push(`${wrong} (${String(named)})`);
+    if (named !== undefined && (!/^\s*-?\s*uses:/.test(code) || named.startsWith('docker://'))) {
+        const wrong = checkImage(named, major);
+        if (wrong) problems.push(`${wrong} (${named})`);
+    }
     const runtime = /^\s*using:\s*['"]?node(\d+)/.exec(code);
     if (runtime && Number(runtime[1]) !== major)
         problems.push(`runs an action on Node ${runtime[1]}`);
@@ -228,8 +251,9 @@ const checkActionsLine = (code, major) => {
  */
 const checkDockerLine = (code, major) => {
     const image = /^\s*FROM\s+(?:--\S+\s+)*(\S+)/i.exec(code)?.[1];
-    const wrong = image === undefined ? undefined : checkImage(image, major);
-    return wrong ? [`${wrong} (${String(image)})`] : [];
+    if (image === undefined) return [];
+    const wrong = checkImage(image, major);
+    return wrong ? [`${wrong} (${image})`] : [];
 };
 
 /**
@@ -322,7 +346,7 @@ const checkVersionFile = (path, text, major) => {
  *
  * @param {string} path
  * @param {string} text
- * @returns {{ value?: any, problem?: string }}
+ * @returns {{ value?: unknown, problem?: string }}
  */
 const parse = (path, text) => {
     try {
@@ -336,20 +360,29 @@ const parse = (path, text) => {
 
 /**
  * The repository's JSON files, each read once, and the ones that could not be.
+ * A file that parses to anything but an object is reported here, so every
+ * rule after this one can read fields from what it is given.
  *
  * @param {Map<string, string>} files
- * @returns {{ json: Map<string, any>, problems: string[] }}
+ * @returns {{ packages: Map<string, PackageJson>, lock: PackageLock | undefined, problems: string[] }}
  */
 const readJson = (files) => {
-    const json = new Map();
+    /** @type {Map<string, PackageJson>} */
+    const packages = new Map();
+    /** @type {PackageLock | undefined} */
+    let lock;
     const problems = [];
     for (const [path, text] of files) {
-        if (!['package.json', 'package-lock.json'].includes(basename(path))) continue;
+        const name = basename(path);
+        if (name !== 'package.json' && name !== 'package-lock.json') continue;
         const { value, problem } = parse(path, text);
-        if (problem) problems.push(problem);
-        else json.set(path, value);
+        if (problem !== undefined) problems.push(problem);
+        else if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+            problems.push(`${path}: is not a JSON object`);
+        } else if (name === 'package.json') packages.set(path, /** @type {PackageJson} */ (value));
+        else if (path === 'package-lock.json') lock = /** @type {PackageLock} */ (value);
     }
-    return { json, problems };
+    return { packages, lock, problems };
 };
 
 /**
@@ -357,17 +390,23 @@ const readJson = (files) => {
  *
  * @param {string} path
  * @param {string} text
- * @param {{ major: number, json: Map<string, any>, packages: Map<string, any> }} context
+ * @param {{ major: number, packages: Map<string, PackageJson>, lock: PackageLock | undefined }} context
  * @returns {string[]}
  */
-const checkFile = (path, text, { major, json, packages }) => {
+const checkFile = (path, text, { major, packages, lock }) => {
+    const name = basename(path);
     if (path === '.nvmrc') return [];
-    if (VERSION_FILES.has(basename(path))) return checkVersionFile(path, text, major);
-    if (packages.has(path)) return checkPackage(path, packages.get(path), major);
-    if (path === 'package-lock.json' && json.has(path) && packages.has('package.json')) {
-        return checkLock(json.get(path), packages);
+    if (VERSION_FILES.has(name)) return checkVersionFile(path, text, major);
+    if (name === 'package.json') {
+        const pkg = packages.get(path);
+        return pkg === undefined ? [] : checkPackage(path, pkg, major);
     }
-    return json.has(path) ? [] : checkText(path, text, major);
+    if (name === 'package-lock.json') {
+        return path === 'package-lock.json' && lock !== undefined && packages.has('package.json')
+            ? checkLock(lock, packages)
+            : [];
+    }
+    return checkText(path, text, major);
 };
 
 /**
@@ -381,11 +420,10 @@ export const nodeMismatches = (files) => {
     if (nvmrc === undefined) return ['.nvmrc is missing'];
     if (!/^\d+$/.test(nvmrc)) return [`.nvmrc holds "${nvmrc}", expected a bare major such as 24`];
     const major = Number(nvmrc);
-    const { json, problems } = readJson(files);
-    const packages = new Map([...json].filter(([path]) => basename(path) === 'package.json'));
+    const { packages, lock, problems } = readJson(files);
     return [
         ...problems,
-        ...[...files].flatMap(([path, text]) => checkFile(path, text, { major, json, packages })),
+        ...[...files].flatMap(([path, text]) => checkFile(path, text, { major, packages, lock })),
     ];
 };
 
