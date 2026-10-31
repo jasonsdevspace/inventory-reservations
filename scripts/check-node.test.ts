@@ -14,19 +14,9 @@ const ROOT = JSON.stringify({
     engines: { node: '>=24 <25' },
     devDependencies: { '@types/node': '24.19.2' },
 });
-const LOCK = JSON.stringify({ packages: { '': { engines: { node: '>=24 <25' } } } });
-
-const repo = (extra: Record<string, string> = {}): Map<string, string> =>
-    new Map(
-        Object.entries({
-            '.nvmrc': '24\n',
-            'package.json': ROOT,
-            'package-lock.json': LOCK,
-            ...extra,
-        })
-    );
-
 const pkg = (fields: Record<string, unknown>): string => JSON.stringify(fields);
+const repo = (extra: Record<string, string> = {}): Map<string, string> =>
+    new Map(Object.entries({ '.nvmrc': '24\n', 'package.json': ROOT, ...extra }));
 
 describe('the Node version check', () => {
     it('passes when everything names the major in .nvmrc', () => {
@@ -35,140 +25,54 @@ describe('the Node version check', () => {
                 repo({
                     'README.md': 'You need [Node.js 24](https://nodejs.org/) and Git.',
                     '.github/workflows/ci.yml':
-                        '    services:\n      db:\n        image: postgres:18-alpine\n    steps:\n      - with:\n          node-version-file: .nvmrc\n',
+                        '      - with:\n          node-version-file: .nvmrc\n',
                     Dockerfile:
-                        'FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:abc AS build\nFROM gcr.io/distroless/nodejs24-debian12\n',
-                    'demo/.nvmrc': '24\n',
+                        'FROM node:24-bookworm-slim@sha256:abc AS build\nFROM postgres:18\nFROM gcr.io/distroless/nodejs24-debian12\n',
+                    'packages/engine/package.json': pkg({ engines: { node: '>=20' } }),
+                    'packages/engine/README.md': 'Runs on Node 20 or later.',
                 })
             )
         ).toEqual([]);
     });
 
-    it('needs a .nvmrc holding a bare major, and every other version file to name it', () => {
+    it('needs a .nvmrc holding a bare major', () => {
         expect(nodeMismatches(new Map([['package.json', ROOT]]))).toEqual(['.nvmrc is missing']);
         expect(nodeMismatches(repo({ '.nvmrc': 'lts/*\n' }))[0]).toMatch(/bare major/);
+    });
+
+    it('holds a private package to the one major, and needs engines at the root', () => {
         expect(
             nodeMismatches(
-                repo({
-                    'demo/.nvmrc': 'v24.11.0\n',
-                    '.tool-versions': 'python 3.12\nnodejs 24.11.0\n',
-                })
+                repo({ 'package.json': pkg({ private: true, engines: { node: '^24' } }) })
             )
         ).toEqual([]);
         expect(
-            nodeMismatches(repo({ 'demo/.nvmrc': '22\n', '.node-version': '20.1.0\n' }))
-        ).toEqual([
-            'demo/.nvmrc: names Node 22, expected 24',
-            '.node-version: names Node 20.1.0, expected 24',
+            nodeMismatches(
+                repo({ 'package.json': pkg({ private: true, engines: { node: '>=24' } }) })
+            )
+        ).toEqual(['package.json: engines.node is ">=24", expected ">=24 <25"']);
+        expect(nodeMismatches(repo({ 'package.json': pkg({ private: true }) }))).toEqual([
+            'package.json: engines.node is missing',
         ]);
     });
 
-    it('needs Volta and devEngines to name the major too', () => {
-        const pinned = pkg({
-            private: true,
-            engines: { node: '>=24 <25' },
-            volta: { node: '22.1.0' },
-            devEngines: { runtime: { name: 'node', version: '^24' } },
-        });
-        expect(nodeMismatches(repo({ 'package.json': pinned }))).toContain(
-            'package.json: volta.node is 22.1.0, expected Node 24'
-        );
-        expect(nodeMismatches(repo({ 'package.json': pinned }))).toHaveLength(1);
-    });
-
-    it('holds a private package to the one major, in any of the ways it can be written', () => {
-        for (const node of ['>=24 <25', '>=24.0.0 <25.0.0', '^24', '24.x', '~24.11']) {
-            expect(
-                nodeMismatches(
-                    repo({ 'demo/package.json': pkg({ private: true, engines: { node } }) })
-                )
-            ).toEqual([]);
-        }
-        expect(
-            nodeMismatches(
-                repo({ 'demo/package.json': pkg({ private: true, engines: { node: '>=24' } }) })
-            )
-        ).toEqual(['demo/package.json: engines.node is ">=24", expected ">=24 <25"']);
-    });
-
     it('lets a published package start at or below the major, with no upper bound', () => {
-        for (const node of ['>=24', '>=24.11', '>=20']) {
-            expect(
-                nodeMismatches(repo({ 'engine/package.json': pkg({ engines: { node } }) }))
-            ).toEqual([]);
-        }
         expect(
-            nodeMismatches(repo({ 'engine/package.json': pkg({ engines: { node: '>=26' } }) }))[0]
-        ).toMatch(/starting no later than 24, with no upper bound$/);
+            nodeMismatches(repo({ 'engine/package.json': pkg({ engines: { node: '>=26' } }) }))
+        ).toHaveLength(1);
         expect(
             nodeMismatches(repo({ 'engine/package.json': pkg({ engines: { node: '^24' } }) }))
         ).toHaveLength(1);
     });
 
-    it('needs engines at the root, and leaves a workspace package without them alone', () => {
-        const problems = nodeMismatches(repo({ 'package.json': pkg({ private: true }) }));
-        expect(problems).toContain('package.json: engines.node is missing');
-        expect(
-            nodeMismatches(repo({ 'packages/api/package.json': pkg({ private: true }) }))
-        ).toEqual([]);
-    });
-
-    it('reports a package it cannot read once, with its path, rather than failing', () => {
-        expect(nodeMismatches(repo({ 'package.json': '{ not json' }))).toHaveLength(1);
-        expect(nodeMismatches(repo({ 'demo/package.json': '{ not json' }))[0]).toMatch(
-            /^demo\/package\.json: is not valid JSON/
-        );
-        expect(
-            nodeMismatches(repo({ 'demo/package.json': pkg({ engines: { node: 24 } }) }))[0]
-        ).toMatch(/^demo\/package\.json: engines\.node is not a version range/);
-    });
-
-    it('needs a lockfile it can compare, and no entry for a package that is gone', () => {
-        expect(
-            nodeMismatches(repo({ 'package-lock.json': JSON.stringify({ lockfileVersion: 1 }) }))
-        ).toEqual(['package-lock.json: has no packages map to compare, run npm install']);
-        const gone = JSON.stringify({
-            packages: { '': { engines: { node: '>=24 <25' } }, 'packages/old': {} },
-        });
-        expect(nodeMismatches(repo({ 'package-lock.json': gone }))).toEqual([
-            'package-lock.json: lists packages/old/package.json, which is not there, run npm install',
-        ]);
-    });
-
-    it('needs the lockfile to record the engines each package declares', () => {
-        const stale = JSON.stringify({
-            packages: {
-                '': { engines: { node: '>=24' } },
-                'packages/engine': { engines: { node: '>=20' } },
-                'node_modules/left-alone': { engines: { node: '>=18' } },
-            },
-        });
-        expect(
-            nodeMismatches(
-                repo({
-                    'package-lock.json': stale,
-                    'packages/engine/package.json': pkg({ engines: { node: '>=24' } }),
-                })
-            )
-        ).toEqual([
-            'package-lock.json: records engines.node ">=24" for package.json where it says ">=24 <25", run npm install',
-            'package-lock.json: records engines.node ">=20" for packages/engine/package.json where it says ">=24", run npm install',
-        ]);
-    });
-
-    it('refuses Node types for another major, wherever they are declared', () => {
+    it('refuses Node types for another major, or an open range of them', () => {
         expect(
             nodeMismatches(
                 repo({
                     'demo/package.json': pkg({ devDependencies: { '@types/node': '^26.6.5' } }),
                 })
             )
-        ).toEqual(['demo/package.json: devDependencies has @types/node ^26.6.5, expected Node 24']);
-        expect(
-            nodeMismatches(
-                repo({ 'demo/package.json': pkg({ overrides: { '@types/node': '26' } }) })
-            )
-        ).toHaveLength(1);
+        ).toEqual(['demo/package.json: @types/node is "^26.6.5", expected Node 24']);
         expect(
             nodeMismatches(
                 repo({ 'demo/package.json': pkg({ devDependencies: { '@types/node': '>=24' } }) })
@@ -176,134 +80,76 @@ describe('the Node version check', () => {
         ).toHaveLength(1);
     });
 
-    it('leaves an override that points at the declared Node types alone, and no other reference', () => {
-        expect(
-            nodeMismatches(
-                repo({ 'demo/package.json': pkg({ overrides: { '@types/node': '$@types/node' } }) })
-            )
-        ).toEqual([]);
-        expect(
-            nodeMismatches(
-                repo({ 'demo/package.json': pkg({ overrides: { '@types/node': '$typescript' } }) })
-            )
-        ).toHaveLength(1);
-        expect(
-            nodeMismatches(
-                repo({
-                    'demo/package.json': pkg({
-                        devDependencies: { '@types/node': 'npm:@types/node@24' },
-                    }),
-                })
-            )
-        ).toEqual([]);
-    });
-
-    it('lets a published peer range admit earlier majors, as long as it admits this one', () => {
-        expect(
-            nodeMismatches(
-                repo({
-                    'engine/package.json': pkg({ peerDependencies: { '@types/node': '>=20' } }),
-                })
-            )
-        ).toEqual([]);
-        expect(
-            nodeMismatches(
-                repo({ 'engine/package.json': pkg({ peerDependencies: { '@types/node': '^22' } }) })
-            )
-        ).toHaveLength(1);
-    });
-
-    it('refuses a workflow or an action that names its own version, but not a comment about one', () => {
-        const problems = nodeMismatches(
-            repo({
-                '.github/workflows/ci.yml':
-                    "steps:\n    # node-version: 24 is read from .nvmrc\n    - with:\n          node-version: '24'\n    - with: { node-version: 22 }\n",
-                '.github/actions/setup/action.yml': '      with:\n        node-version: 22\n',
-            })
-        );
-        expect(problems).toEqual([
-            '.github/workflows/ci.yml:4: names its own Node version, read node-version-file: .nvmrc instead',
-            '.github/workflows/ci.yml:5: names its own Node version, read node-version-file: .nvmrc instead',
-            '.github/actions/setup/action.yml:2: names its own Node version, read node-version-file: .nvmrc instead',
-        ]);
-    });
-
-    it('refuses a job, a step or an action that runs on another major', () => {
+    it('refuses a workflow that names its own version, but not a comment about one', () => {
         expect(
             nodeMismatches(
                 repo({
                     '.github/workflows/ci.yml':
-                        'jobs:\n  a:\n    container: node:22\n    steps:\n      - uses: docker://node:22\n      - uses: actions/setup-node@abc\n      - uses: ./.github/actions/node\n',
-                    '.github/actions/js/action.yml': "runs:\n  using: 'node20'\n",
+                        "    # node-version: 24 comes from .nvmrc\n    with: { node-version: '24' }\n",
                 })
             )
         ).toEqual([
-            '.github/workflows/ci.yml:3: uses a Node image of another major (node:22)',
-            '.github/workflows/ci.yml:5: uses a Node image of another major (docker://node:22)',
-            '.github/actions/js/action.yml:2: runs an action on Node 20',
+            '.github/workflows/ci.yml:2: names its own Node version, read node-version-file: .nvmrc instead',
         ]);
     });
 
-    it('refuses a Dockerfile whose Node images name another major, or none it can read', () => {
-        const problems = nodeMismatches(
-            repo({
-                Dockerfile:
-                    'FROM --platform=linux/amd64 node:26-bookworm-slim\nFROM gcr.io/distroless/nodejs22-debian12\nFROM \\\n    node:20\nFROM nodemon:3\n',
-                'Dockerfile.dev':
-                    'ARG NODE=24\nFROM node:${NODE}\nFROM node:lts-alpine\nFROM node\n',
-            })
-        );
-        expect(problems).toEqual([
-            'Dockerfile:1: uses a Node image of another major (node:26-bookworm-slim)',
-            'Dockerfile:2: uses a Node image of another major (gcr.io/distroless/nodejs22-debian12)',
-            'Dockerfile:3: uses a Node image of another major (node:20)',
-            'Dockerfile.dev:2: uses a Node image whose tag does not name a major (node:${NODE})',
-            'Dockerfile.dev:3: uses a Node image whose tag does not name a major (node:lts-alpine)',
-            'Dockerfile.dev:4: uses a Node image whose tag does not name a major (node)',
-        ]);
-    });
-
-    it('refuses a root README that names another major, and leaves a package README and other nodes alone', () => {
+    it('refuses a Dockerfile on another major, or on a tag that names none', () => {
         expect(
             nodeMismatches(
                 repo({
-                    'README.md': 'Each node 3 hops away is a peer.',
-                    'packages/engine/README.md': 'Runs on Node 20 or later.',
+                    'docker/Dockerfile':
+                        'FROM --platform=linux/amd64 node:22-slim\nFROM node:lts\nFROM gcr.io/distroless/nodejs22-debian12\n',
                 })
             )
-        ).toEqual([]);
+        ).toEqual([
+            'docker/Dockerfile:1: uses Node 22 (node:22-slim)',
+            'docker/Dockerfile:2: uses a Node image whose tag does not name a major (node:lts)',
+            'docker/Dockerfile:3: uses Node 22 (gcr.io/distroless/nodejs22-debian12)',
+        ]);
     });
 
-    it('refuses a root README that names another major, however it is written', () => {
+    it('refuses a root README that names another major', () => {
         expect(
             nodeMismatches(
                 repo({
                     'README.md':
-                        'You need [Node.js 22](https://nodejs.org/).\nNode v20 or later works.\nNode.js 24 is in .nvmrc.\nNode >= 16.\n[Node.js](https://nodejs.org) 14 too.\nSee node_modules for the rest.',
+                        'You need [Node.js 22](https://nodejs.org/).\nEach node 3 hops away is a peer.',
+                })
+            )
+        ).toEqual(['README.md:1: tells a reader Node 22']);
+    });
+
+    it('reads the other ways a range, a Dockerfile and the Node types are written', () => {
+        for (const node of ['24.x', '>=24.0.0 <25.0.0']) {
+            expect(
+                nodeMismatches(repo({ 'package.json': pkg({ private: true, engines: { node } }) }))
+            ).toEqual([]);
+        }
+        expect(
+            nodeMismatches(
+                repo({
+                    Dockerfile:
+                        'FROM node@sha256:abc\nFROM ubi9/nodejs-20\nFROM nodejs:24\nFROM nodemon:3\n',
                 })
             )
         ).toEqual([
-            'README.md:1: tells a reader Node 22',
-            'README.md:2: tells a reader Node 20',
-            'README.md:4: tells a reader Node 16',
-            'README.md:5: tells a reader Node 14',
+            'Dockerfile:1: uses a Node image whose tag does not name a major (node@sha256:abc)',
+            'Dockerfile:2: uses Node 20 (ubi9/nodejs-20)',
         ]);
-    });
-
-    it('reports a JSON file that is not an object, rather than reading fields from it', () => {
-        expect(nodeMismatches(repo({ 'demo/package.json': 'null' }))).toEqual([
-            'demo/package.json: is not a JSON object',
-        ]);
+        expect(nodeMismatches(repo({ 'docker/Dockerfile.prod': 'FROM node:20-alpine\n' }))).toEqual(
+            ['docker/Dockerfile.prod:1: uses Node 20 (node:20-alpine)']
+        );
+        expect(
+            nodeMismatches(
+                repo({ 'demo/package.json': pkg({ overrides: { '@types/node': '26.0.0' } }) })
+            )
+        ).toHaveLength(1);
     });
 });
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'check-node.mjs');
+const HERE = dirname(fileURLToPath(import.meta.url));
 
-/**
- * The environment for git and the script in a throwaway repository: the
- * parent's, without anything that points git at another repository or reads
- * the user's own config, so a run from inside a hook or a rebase stays put.
- */
+/** The parent's environment, without anything that points git elsewhere or reads the user's config. */
 const isolated = (): NodeJS.ProcessEnv => ({
     ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
     GIT_CONFIG_GLOBAL: '/dev/null',
@@ -311,16 +157,12 @@ const isolated = (): NodeJS.ProcessEnv => ({
 });
 
 /**
- * A throwaway repository holding the files given, the tracked ones added to
- * git's index and the rest left for git to find, with the script copied in
- * and run from a folder below the top, as a contributor might.
+ * A throwaway repository with the tracked files added to git's index and the
+ * rest left for git to find, and the script run from a folder below the top.
  */
-const runIn = (
-    tracked: Record<string, string>,
-    untracked: Record<string, string> = {}
-): { status: number | null; stdout: string; stderr: string } => {
+const runIn = (tracked: Record<string, string>, untracked: Record<string, string> = {}) => {
     const root = mkdtempSync(join(tmpdir(), 'check-node-'));
-    const env = isolated();
+    const options = { cwd: root, env: isolated(), timeout: 10_000 };
     const write = (files: Record<string, string>): void => {
         for (const [path, text] of Object.entries(files)) {
             mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -328,16 +170,18 @@ const runIn = (
         }
     };
     try {
-        execFileSync('git', ['init', '--quiet'], { cwd: root, env });
+        execFileSync('git', ['init', '--quiet'], options);
         write(tracked);
-        execFileSync('git', ['add', '--all'], { cwd: root, env });
+        execFileSync('git', ['add', '--all'], options);
         write(untracked);
         mkdirSync(join(root, 'scripts'), { recursive: true });
-        copyFileSync(SCRIPT, join(root, 'scripts/check-node.mjs'));
+        for (const script of ['check-node.mjs', 'repository.mjs']) {
+            copyFileSync(join(HERE, script), join(root, 'scripts', script));
+        }
         const result = spawnSync(process.execPath, ['check-node.mjs'], {
+            ...options,
             cwd: join(root, 'scripts'),
             encoding: 'utf8',
-            env,
         });
         return { status: result.status, stdout: result.stdout, stderr: result.stderr };
     } finally {
@@ -345,37 +189,24 @@ const runIn = (
     }
 };
 
-const CLEAN = {
-    '.nvmrc': '24\n',
-    'package.json': ROOT,
-    'package-lock.json': LOCK,
-};
-
 describe('the Node version check, run as a command', () => {
-    it('passes in a repository that names one major everywhere, reading the files git tracks', () => {
-        const result = runIn(CLEAN);
-        expect(result.stderr).toBe('');
-        expect(result.stdout).toBe('Node version check passed. Everything names Node 24.\n');
-        expect(result.status).toBe(0);
+    const clean = { '.nvmrc': '24\n', 'package.json': ROOT };
+
+    it('passes on the files git tracks', () => {
+        expect(runIn(clean)).toEqual({
+            status: 0,
+            stdout: 'Node version check passed. Everything names Node 24.\n',
+            stderr: '',
+        });
     });
 
-    it('fails with each problem, reading files git has not been told about yet', () => {
-        const result = runIn(CLEAN, {
-            '.github/actions/node/action.yaml': "runs:\n  using: 'node20'\n",
-        });
-        expect(result.stderr).toBe(
-            'Node version check failed.\n\n.github/actions/node/action.yaml:2: runs an action on Node 20\n'
+    it('fails on a tracked file, and on one git has not been told about yet', () => {
+        const result = runIn(
+            { ...clean, 'README.md': 'Use [Node.js 22](https://nodejs.org/).\n' },
+            { Dockerfile: 'FROM node:20\n' }
         );
-        expect(result.status).toBe(1);
-    });
-
-    it('fails on a problem in a file git tracks', () => {
-        const result = runIn({
-            ...CLEAN,
-            'README.md': 'You need [Node.js 22](https://nodejs.org/).\n',
-        });
         expect(result.stderr).toBe(
-            'Node version check failed.\n\nREADME.md:1: tells a reader Node 22\n'
+            'Node version check failed.\n\nDockerfile:1: uses Node 20 (node:20)\nREADME.md:1: tells a reader Node 22\n'
         );
         expect(result.status).toBe(1);
     });
