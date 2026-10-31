@@ -7,3 +7,4 @@ scripts
 src/**/*.test.ts
 .cache
 sbom.cdx.json
+acceptances-*.json

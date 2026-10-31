@@ -270,6 +270,41 @@ jobs:
                   trivyignores: .trivyignore.yaml
                   skip-setup-trivy: true
 
+            # Both scans again as reports, with the suppressed findings shown,
+            # so the check below can see which acceptance excused what.
+            - name: Report what each acceptance suppressed in the image
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: image
+                  image-ref: ${{ steps.built.outputs.ref }}
+                  scanners: vuln
+                  format: json
+                  output: acceptances-image.json
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            - name: Report what each acceptance suppressed in the lockfiles
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  format: json
+                  output: acceptances-fs.json
+                  trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
+
+            # Fails on an acceptance that no longer matches anything, which is
+            # what a base image with the fix leaves behind, and warns on one
+            # within thirty days of its date.
+            - name: Check the acceptances
+              run: node scripts/check-acceptances.mjs acceptances-image.json acceptances-fs.json
+
             # The same scan with nothing filtered out, so a finding that has
             # no fix yet is on the record without failing the job.
             - name: List findings with no fix yet

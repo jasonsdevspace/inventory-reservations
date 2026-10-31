@@ -72,6 +72,9 @@ Each record names the option it rejected and what the choice costs.
    A query that forgets its filter sees one merchant's rows and one with no merchant sees none,
    never everything, and the service runs as a role that can never delete, at the cost of one
    setting per transaction.
+7. [Publish only the image that was scanned](docs/decisions/0007-publish-only-what-was-scanned.md).
+   A finding fails the build when it can be fixed, an acceptance expires, and what ships is the
+   exact image that was checked, at the cost of deadlines someone has to meet.
 
 <details>
 <summary><b>Where a stale answer is acceptable</b>, and where it is not</summary>
@@ -192,8 +195,10 @@ images pinned by digest, and scans it. A high or critical vulnerability with a f
 the build. Findings with no fix yet are listed in their own step without failing it, since the fix
 is the next base image or release, and Dependabot opens that pull request. A finding that does not
 apply is accepted in `.trivyignore.yaml`, scoped to one package, with the reason and a date the
-acceptance expires, so it is looked at again rather than kept forever. The acceptances there today
-cover Debian's OpenSSL in the runtime image, which nothing loads, because Node carries its own.
+acceptance expires, so it is looked at again rather than kept forever. A check in CI warns thirty
+days before an acceptance expires, and fails on one that no longer matches anything. The acceptances
+there today cover Debian's OpenSSL in the runtime image, which nothing loads, because Node carries
+its own.
 
 A bill of materials is kept with every run. On main the image is pushed with its bill of materials
 and a build provenance attestation attached, and that pushed image is the one scanned. Once every
