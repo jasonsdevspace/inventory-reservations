@@ -74,7 +74,7 @@ describe('the ledger through Postgres', () => {
         ]);
     });
 
-    it('returns stock to the shelf when the order is cancelled', async () => {
+    it('returns stock to the shelf when the order is canceled', async () => {
         const store = createStore(pool, 'row_lock');
         await store.placeOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 }, strict);
         await store.cancelOrder({ merchantId, sku, orderId: 'o-1', quantity: 3 });

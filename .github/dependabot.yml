@@ -4,12 +4,15 @@
 # own, so without this they would quietly fall behind. Minor and patch updates
 # are grouped into one pull request per ecosystem to keep the noise down.
 # Security fixes arrive separately, as soon as an advisory is published.
+# Each update carries the dependencies label alone, so pull requests sort by
+# the kind of work rather than by the package manager.
 version: 2
 updates:
     - package-ecosystem: npm
       directory: /
       schedule:
           interval: weekly
+      labels: ['dependencies']
       groups:
           npm:
               update-types: [minor, patch]
@@ -18,12 +21,16 @@ updates:
       ignore:
           - dependency-name: typescript
             update-types: ['version-update:semver-major']
+          # The Node types follow the Node major in .nvmrc.
+          - dependency-name: '@types/node'
+            update-types: ['version-update:semver-major']
 
     # The browser demo has its own dependencies, pinned to exact versions.
     - package-ecosystem: npm
       directory: /demo
       schedule:
           interval: weekly
+      labels: ['dependencies']
       groups:
           demo:
               update-types: [minor, patch]
@@ -31,11 +38,15 @@ updates:
       ignore:
           - dependency-name: typescript
             update-types: ['version-update:semver-major']
+          # The Node types follow the Node major in .nvmrc.
+          - dependency-name: '@types/node'
+            update-types: ['version-update:semver-major']
 
     - package-ecosystem: github-actions
       directory: /
       schedule:
           interval: weekly
+      labels: ['dependencies']
       groups:
           actions:
               patterns: ['*']
@@ -45,6 +56,7 @@ updates:
       directory: /
       schedule:
           interval: weekly
+      labels: ['dependencies']
       # A Node major moves the build stages and the distroless runtime
       # together, along with CI and the engines field, so it is a deliberate
       # upgrade rather than an automatic one. Only the build stages would move

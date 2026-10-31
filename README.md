@@ -53,6 +53,30 @@ so when the warehouse count disagrees there is nothing to compare it with.
   digest, scanned before it is published, and published with its bill of materials and build
   provenance.
 
+## Each claim, and the test behind it
+
+Each promise about stock in the short version has a test that fails if it stops being true. These
+tests run against a real Postgres database, both in CI and in the container you start under Run
+the service.
+
+- No ledger entry can be updated or deleted, even by the database's owner. Tested in
+  [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
+- When 12 orders arrive at once for the last unit, exactly one succeeds. Tested in
+  [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
+- With the protection turned off, the same 12 orders do oversell. That shows the exactly-once test
+  is checking something real. Tested in
+  [`src/postgres/store/store.test.ts`](src/postgres/store/store.test.ts).
+- A retried request gets the first answer again, not a second order. Tested in
+  [`src/postgres/idempotency/idempotency.test.ts`](src/postgres/idempotency/idempotency.test.ts).
+- An abandoned checkout hold expires and gives its stock back on its own. Tested in
+  [`src/postgres/holds/holds.test.ts`](src/postgres/holds/holds.test.ts).
+- A query that forgets to filter by merchant still sees only one merchant's stock. Tested in
+  [`src/postgres/security/security.test.ts`](src/postgres/security/security.test.ts).
+- The service runs as a role that cannot delete stock or reservations. Tested in
+  [`src/postgres/security/security.test.ts`](src/postgres/security/security.test.ts).
+- The reconciliation job reports a broken history and changes nothing. Tested in
+  [`src/postgres/reconcile/reconcile.test.ts`](src/postgres/reconcile/reconcile.test.ts).
+
 ## Decisions
 
 Each record names the option it rejected and what the choice costs.
@@ -462,7 +486,7 @@ same stock at the same moment and both be told yes. `CONCURRENCY_STRATEGY` picks
 
 | Strategy             | How it works                                        | Twelve orders for one unit |
 | -------------------- | --------------------------------------------------- | -------------------------- |
-| `none`               | No protection, kept to prove the bug is real        | 10 to 12 succeed           |
+| `none`               | No protection, kept to prove the bug is real        | usually 11 or 12 succeed   |
 | `row_lock` (default) | Locks the stock row, so orders for a SKU queue      | exactly 1 succeeds         |
 | `serializable`       | Postgres detects the conflict and the loser retries | exactly 1 succeeds         |
 
