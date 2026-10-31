@@ -16,11 +16,12 @@ updates:
       groups:
           npm:
               update-types: [minor, patch]
-      # A new TypeScript major waits for typescript-eslint to support it,
-      # since the lint tooling refuses to install against an unsupported one.
+      # A new TypeScript minor or major waits for typescript-eslint to
+      # support it, since the lint tooling refuses to install against an
+      # unsupported one, and it names supported versions down to the minor.
       ignore:
           - dependency-name: typescript
-            update-types: ['version-update:semver-major']
+            update-types: ['version-update:semver-major', 'version-update:semver-minor']
           # The Node types follow the Node major in .nvmrc.
           - dependency-name: '@types/node'
             update-types: ['version-update:semver-major']
@@ -34,10 +35,10 @@ updates:
       groups:
           demo:
               update-types: [minor, patch]
-      # Kept on the same TypeScript major as the rest of the repo.
+      # Kept on the same TypeScript minor as the rest of the repo.
       ignore:
           - dependency-name: typescript
-            update-types: ['version-update:semver-major']
+            update-types: ['version-update:semver-major', 'version-update:semver-minor']
           # The Node types follow the Node major in .nvmrc.
           - dependency-name: '@types/node'
             update-types: ['version-update:semver-major']
