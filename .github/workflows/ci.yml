@@ -213,7 +213,6 @@ jobs:
                   format: json
                   output: acceptances-fs.json
                   trivyignores: .trivyignore.yaml
-                  skip-setup-trivy: true
 
             - name: Set up Buildx
               uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -297,6 +296,7 @@ jobs:
                   ignore-unfixed: true
                   exit-code: 1
                   trivyignores: .trivyignore.yaml
+                  skip-setup-trivy: true
 
             - name: Scan the image
               uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
