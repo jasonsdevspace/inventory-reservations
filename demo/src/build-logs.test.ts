@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { failOnWarning } from './build-logs.js';
 
-// The warnings as a build of the demo gives them, cut to what is matched.
+// PGlite's two warnings as a demo build reports them, trimmed to the fields that are read.
 const PGLITE_CHUNK = '/repo/demo/node_modules/@electric-sql/pglite/dist/chunk-IVSF7R5H.js';
 const EVAL_MESSAGE = '[EVAL] Use of direct `eval` function is strongly discouraged';
 const pgliteEval = { code: 'EVAL', id: PGLITE_CHUNK, message: EVAL_MESSAGE };
@@ -23,7 +23,7 @@ describe('the build', () => {
         const handler = vi.fn();
         expect(() =>
             failOnWarning('warn', { ...pgliteEval, id: '/repo/demo/src/main.tsx' }, handler)
-        ).toThrow(`the build warned: [EVAL] /repo/demo/src/main.tsx ${EVAL_MESSAGE}`);
+        ).toThrow(`the build warned: /repo/demo/src/main.tsx ${EVAL_MESSAGE}`);
         expect(() =>
             failOnWarning(
                 'warn',
@@ -38,6 +38,13 @@ describe('the build', () => {
             )
         ).toThrow('[plugin rolldown:vite-resolve]');
         expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('fails on another Node module PGlite imports', () => {
+        const message = pgliteNodeImport.message.replace('node:module', 'node:fs');
+        expect(() => failOnWarning('warn', { ...pgliteNodeImport, message }, vi.fn())).toThrow(
+            'node:fs'
+        );
     });
 
     it('fails on any other warning, even one that names PGlite', () => {

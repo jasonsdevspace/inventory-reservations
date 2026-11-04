@@ -15,18 +15,21 @@ import { themeScript } from './src/theme-plugin.js';
  * itself, which the dependency optimizer would break by moving the module.
  *
  * DEMO_BASE is the path the site is served under. GitHub Pages serves a
- * project site from /<repository>/, and local development from /.
+ * project site from /<repository>/. Left unset, the base is /, which is
+ * what local development uses.
  *
  * The explainer at about/ is a second page, so it is listed as an input
  * beside the demo's own, or the build would leave it out. Its entry only
  * starts the visit counter, so the counter is the one script chunk the two
  * pages share and the explainer never loads the demo's database client.
  *
- * A warning from the bundler fails the build, PGlite's aside, as
- * build-logs.ts says. Vite's notice that a chunk is past 500 kB is printed
- * outside that, and PGlite's client is most of the demo's script, so the
- * notice is raised past where the demo is. The Lighthouse audit is what holds
- * the page's script, at 250 KB gzipped.
+ * A bundler warning fails the build, as build-logs.ts explains. Vite's
+ * notice that a chunk is large is printed by Vite itself, never reaches that
+ * check, and cannot fail anything. PGlite's client puts the main chunk past
+ * Vite's default limit, so the notice would print on every build and teach
+ * a reader to skip the output. The limit, in minified kB, sits above the
+ * chunk as it is, and the Lighthouse audit in CI holds the page's script to
+ * 250 KB gzipped.
  */
 export default defineConfig({
     base: process.env.DEMO_BASE ?? '/',
