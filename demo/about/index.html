@@ -10,6 +10,7 @@
         />
         <title>How inventory-reservations works</title>
         <link rel="stylesheet" href="/src/styles.css" />
+        <script type="module" src="/src/about.ts"></script>
     </head>
     <body>
         <a class="skip" href="#main-content">Skip to content</a>
@@ -37,7 +38,10 @@
                     person who built it understands the problem. The demo runs the service's own
                     code against a real Postgres database inside your browser, with the same tables,
                     roles and permissions as a deployment. It takes a few seconds to start and says
-                    so. Nothing to install, and nothing you do in it leaves your machine.
+                    so. Nothing to install, and nothing you do in it leaves your machine. The site
+                    does count visits to its pages, with a service called Plausible that sets no
+                    cookie, and it counts nothing when your browser sends the Global Privacy Control
+                    signal.
                 </p>
                 <p><a class="tour-try" href="../">Open the demo</a></p>
 

@@ -16,9 +16,9 @@ import { themeScript } from './src/theme-plugin.js';
  * DEMO_BASE is the path the site is served under. GitHub Pages serves a
  * project site from /<repository>/, and local development from /.
  *
- * The explainer at about/ is a second page in the build. It carries no
- * script of its own, so the two pages share no chunk and the demo's page
- * is built as it was.
+ * The explainer at about/ is a second page in the build. Its one script
+ * counts its visits, so the only chunk the two pages share is the visit
+ * counter, and the demo's page is otherwise built as it was.
  */
 export default defineConfig({
     base: process.env.DEMO_BASE ?? '/',
