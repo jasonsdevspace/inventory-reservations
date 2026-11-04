@@ -10,8 +10,9 @@ import { trackingAllowed } from './privacy.js';
  * Nothing is stored in the browser and no cookie is set. A visitor whose
  * browser sends Global Privacy Control is not counted at all. Only the path
  * of a page is sent, of the page before it and of a link out, never the
- * query or the fragment. A counter that cannot start leaves the page as it
- * was.
+ * fragment, and never a query but the tags a shared link carries. An address
+ * that cannot be read is not sent. A counter that cannot start leaves the
+ * page as it was.
  *
  * The tracker leaves out pages on localhost and under an automated browser,
  * so the dev server, the end to end tests and the Lighthouse audits, which
@@ -41,29 +42,58 @@ const pathOnly = (address: string): string | null => {
     const url = parsed(address);
     if (!url) return null;
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return address.split(/[?#]/)[0] ?? null;
+        return address.replace(/[?#].*$/s, '');
     }
     return `${url.origin}${url.pathname}`;
 };
 
 /**
+ * The query keys a shared link is tagged with, which say where the link was
+ * shared and nothing about the visitor, so a page's address keeps them.
+ */
+const SOURCE_KEYS = [
+    'utm_source',
+    'utm_medium',
+    'utm_campaign',
+    'utm_content',
+    'utm_term',
+    'ref',
+    'source',
+];
+
+/** A page's address without its fragment or any query but the tags a shared link carries. */
+const pageOnly = (address: string): string | null => {
+    const url = parsed(address);
+    const page = pathOnly(address);
+    if (!url || page === null) return null;
+    const kept = new URLSearchParams();
+    for (const key of SOURCE_KEYS) {
+        const value = url.searchParams.get(key);
+        if (value !== null) kept.set(key, value);
+    }
+    const query = kept.toString();
+    return query === '' ? page : `${page}?${query}`;
+};
+
+/**
  * What is sent for a visit or a click, with each address cut back to its
- * path, or nothing when the page's own address cannot be read. It never
+ * path, or nothing when an address it carries cannot be read. It never
  * throws, since the tracker calls it from its own listeners.
  */
 export const withoutQueries = (
     payload: PlausibleRequestPayload
 ): PlausibleRequestPayload | null => {
-    const page = pathOnly(payload.u);
+    const page = pageOnly(payload.u);
     if (page === null) return null;
     const link = payload.p?.['url'];
+    // A click on a link out carries the link's address among its properties.
+    const linkPath = typeof link === 'string' ? pathOnly(link) : undefined;
+    if (linkPath === null) return null;
     return {
         ...payload,
         u: page,
         r: payload.r ? pathOnly(payload.r) : null,
-        // A click on a link out carries the link's address among its properties.
-        ...(payload.p &&
-            typeof link === 'string' && { p: { ...payload.p, url: pathOnly(link) ?? '' } }),
+        ...(payload.p && linkPath !== undefined && { p: { ...payload.p, url: linkPath } }),
     };
 };
 

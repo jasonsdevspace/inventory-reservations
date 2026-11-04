@@ -75,6 +75,25 @@ describe('counting visits', () => {
         expect(from('not an address')).toBeNull();
     });
 
+    it('keeps the tags a shared link carries, and nothing else of its query', () => {
+        const sent = withoutQueries({
+            n: 'pageview',
+            u: 'https://jasonsdevspace.com/?q=jacket&utm_source=newsletter&utm_campaign=fall#top',
+            d: 'jasonsdevspace.com',
+        });
+        expect(sent?.u).toBe('https://jasonsdevspace.com/?utm_source=newsletter&utm_campaign=fall');
+    });
+
+    it('sends no click on a link out whose address cannot be read', () => {
+        const sent = withoutQueries({
+            n: 'Outbound Link: Click',
+            u: 'https://jasonsdevspace.com/',
+            d: 'jasonsdevspace.com',
+            p: { url: 'not an address' },
+        });
+        expect(sent).toBeNull();
+    });
+
     it('sends nothing for a page whose own address cannot be read', () => {
         expect(withoutQueries({ n: 'pageview', u: 'not an address', d: 'x' })).toBeNull();
     });

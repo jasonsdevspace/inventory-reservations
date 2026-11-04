@@ -34,8 +34,9 @@ our own, which would leave out the reading and the scrolling. One site for the d
 project, so a visit from the portfolio into the demo reads as one journey.
 
 **The path, never the query.** Every address sent, the page's, the one it came from and a link
-out's, is cut back to its path. The demo keeps nothing in its address but the section a link opens,
-and that is left out too.
+out's, is cut back to its path. The page's keeps the tags a shared link carries, such as
+`utm_source`, which say where the link was shared and nothing about the visitor. The demo keeps
+nothing in its address but the section a link opens, and that is left out too.
 
 **Not under Global Privacy Control.** The tracker is never started when the browser sends the
 signal.
@@ -61,6 +62,6 @@ signal.
 - A unit test starts the tracker under the domain with links out counted, starts nothing when the
   browser sends Global Privacy Control, and leaves the page alone when the tracker throws.
 - A unit test holds every address sent to its path: the page's, the one before it and a link out's,
-  and sends nothing for a page whose address cannot be read.
-- A unit test asks git for every page the demo serves, finds each one's entry, and finds each entry
-  starting the counter, so a page added later is held to it too.
+  keeps a shared link's tags on the page's, and sends nothing for an address that cannot be read.
+- A unit test asks git for every page the demo serves, a page not yet added included, finds each
+  one's entry, and finds each entry starting the counter, so a page added later is held to it too.
