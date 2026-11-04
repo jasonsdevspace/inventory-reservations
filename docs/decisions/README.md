@@ -20,3 +20,6 @@ design.
 7. [Publish only the image that was scanned](0007-publish-only-what-was-scanned.md): base images
    pinned by digest, a scan that fails on what can be fixed, acceptances that expire, and a release
    that tags the scanned image rather than building another.
+8. [Visits to the demo are counted by path, with Plausible](0008-visits-are-counted-by-path.md):
+   the tracker bundled from npm under one site for the domain, each address cut back to its path,
+   and nothing counted when the browser sends Global Privacy Control.
