@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+import { failOnWarning } from './src/build-logs.js';
 import { themeScript } from './src/theme-plugin.js';
 
 /*
@@ -20,6 +21,12 @@ import { themeScript } from './src/theme-plugin.js';
  * beside the demo's own, or the build would leave it out. Its entry only
  * starts the visit counter, so the counter is the one script chunk the two
  * pages share and the explainer never loads the demo's database client.
+ *
+ * A warning from the bundler fails the build, PGlite's aside, as
+ * build-logs.ts says. PGlite's client is also most of the demo's script,
+ * which Vite's default warns about past 500 kB. The Lighthouse audit is what
+ * holds the page's script, at 250 KB gzipped, so that warning is raised past
+ * where the demo is.
  */
 export default defineConfig({
     base: process.env.DEMO_BASE ?? '/',
@@ -28,7 +35,9 @@ export default defineConfig({
     optimizeDeps: { exclude: ['@electric-sql/pglite'] },
     build: {
         target: 'es2023',
+        chunkSizeWarningLimit: 1024,
         rolldownOptions: {
+            onLog: failOnWarning,
             input: {
                 main: fileURLToPath(new URL('./index.html', import.meta.url)),
                 about: fileURLToPath(new URL('./about/index.html', import.meta.url)),

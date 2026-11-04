@@ -58,5 +58,9 @@
         "*.{json,md,yml,yaml,css,html}": [
             "prettier --write"
         ]
+    },
+    "allowScripts": {
+        "unrs-resolver": false,
+        "fsevents": false
     }
 }
