@@ -23,10 +23,10 @@ import { themeScript } from './src/theme-plugin.js';
  * pages share and the explainer never loads the demo's database client.
  *
  * A warning from the bundler fails the build, PGlite's aside, as
- * build-logs.ts says. PGlite's client is also most of the demo's script,
- * which Vite's default warns about past 500 kB. The Lighthouse audit is what
- * holds the page's script, at 250 KB gzipped, so that warning is raised past
- * where the demo is.
+ * build-logs.ts says. Vite's notice that a chunk is past 500 kB is printed
+ * outside that, and PGlite's client is most of the demo's script, so the
+ * notice is raised past where the demo is. The Lighthouse audit is what holds
+ * the page's script, at 250 KB gzipped.
  */
 export default defineConfig({
     base: process.env.DEMO_BASE ?? '/',

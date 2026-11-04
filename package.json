@@ -60,7 +60,7 @@
         ]
     },
     "allowScripts": {
-        "unrs-resolver": false,
-        "fsevents": false
+        "unrs-resolver": true,
+        "fsevents": true
     }
 }
