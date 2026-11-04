@@ -100,8 +100,9 @@ Each record names the option it rejected and what the choice costs.
    A finding fails the build when it can be fixed, an acceptance expires, and what ships is the
    exact image that was checked, at the cost of deadlines someone has to meet.
 8. [Visits to the demo are counted by path, with Plausible](docs/decisions/0008-visits-are-counted-by-path.md).
-   One site for the whole domain, no cookie, no query sent, and nothing counted under Global
-   Privacy Control, at the cost of a few kilobytes of script and an explainer that now has one.
+   One site for the whole domain, no cookie, only paths sent, and nothing counted under Global
+   Privacy Control, at the cost of about 3 KB of script on both pages and counts an ad blocker can
+   lower.
 
 <details>
 <summary><b>Where a stale answer is acceptable</b>, and where it is not</summary>

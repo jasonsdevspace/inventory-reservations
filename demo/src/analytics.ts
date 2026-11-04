@@ -22,24 +22,44 @@ import { trackingAllowed } from './privacy.js';
 /** The site in Plausible that every page on the domain counts under. */
 const DOMAIN = 'jasonsdevspace.com';
 
+/** An address as a URL, or nothing when it is no address at all. */
+const parsed = (address: string): URL | undefined => {
+    try {
+        return new URL(address);
+    } catch {
+        return undefined;
+    }
+};
+
 /**
- * A web address without its query or fragment. Another kind, such as the
- * address an app on a phone gives as its referrer, has neither and is kept
- * as it is, and text that is no address at all is not sent.
+ * An address without its query or fragment. A web address keeps its origin
+ * and path. Another kind, such as the address an app on a phone gives as its
+ * referrer, is cut at its query the same way, and text that is no address at
+ * all is not sent.
  */
 const pathOnly = (address: string): string | null => {
-    if (!URL.canParse(address)) return null;
-    const url = new URL(address);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return address;
+    const url = parsed(address);
+    if (!url) return null;
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return address.split(/[?#]/)[0] ?? null;
+    }
     return `${url.origin}${url.pathname}`;
 };
 
-/** What is sent for a visit or a click, with each address cut back to its path. */
-export const withoutQueries = (payload: PlausibleRequestPayload): PlausibleRequestPayload => {
+/**
+ * What is sent for a visit or a click, with each address cut back to its
+ * path, or nothing when the page's own address cannot be read. It never
+ * throws, since the tracker calls it from its own listeners.
+ */
+export const withoutQueries = (
+    payload: PlausibleRequestPayload
+): PlausibleRequestPayload | null => {
+    const page = pathOnly(payload.u);
+    if (page === null) return null;
     const link = payload.p?.['url'];
     return {
         ...payload,
-        u: pathOnly(payload.u) ?? '',
+        u: page,
         r: payload.r ? pathOnly(payload.r) : null,
         // A click on a link out carries the link's address among its properties.
         ...(payload.p &&

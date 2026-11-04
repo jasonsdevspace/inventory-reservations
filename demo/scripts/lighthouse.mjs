@@ -36,9 +36,9 @@ const RUNS = 3;
 const GATES = { accessibility: 1, seo: 0.9 };
 
 // Milliseconds, a unitless shift score, then kilobytes. The page ships
-// React, the service's own store code and the Postgres client, which
-// together come to about 225 KB of script, so the budget leaves room for
-// a dependency bump and no more. The page loads no font of its own.
+// React, the service's own store code, the Postgres client and the visit
+// counter, which together come to about 225 KB of script, so the budget
+// leaves room for a dependency bump and no more. The page loads no font of its own.
 const TIMINGS = {
     'largest-contentful-paint': 2500,
     'cumulative-layout-shift': 0.1,

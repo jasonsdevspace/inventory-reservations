@@ -51,7 +51,7 @@ describe('counting visits', () => {
             d: 'x',
             r: null,
         });
-        expect(sent.r).toBeNull();
+        expect(sent).toMatchObject({ r: null });
     });
 
     it('sends a link out by its path, without its query or fragment', () => {
@@ -61,17 +61,22 @@ describe('counting visits', () => {
             d: 'jasonsdevspace.com',
             p: { url: 'https://github.com/jasonsdevspace/shelflens?tab=readme#jacket' },
         });
-        expect(sent.p).toEqual({ url: 'https://github.com/jasonsdevspace/shelflens' });
+        expect(sent?.p).toEqual({ url: 'https://github.com/jasonsdevspace/shelflens' });
         expect(JSON.stringify(sent)).not.toContain('jacket');
     });
 
     it('keeps a referrer that is no web address as it is, and sends none that is no address', () => {
         const from = (r: string) =>
-            withoutQueries({ n: 'pageview', u: 'https://jasonsdevspace.com/', d: 'x', r }).r;
+            withoutQueries({ n: 'pageview', u: 'https://jasonsdevspace.com/', d: 'x', r })?.r;
         expect(from('android-app://com.google.android.gm/')).toBe(
             'android-app://com.google.android.gm/'
         );
+        expect(from('android-app://com.example/?q=jacket#top')).toBe('android-app://com.example/');
         expect(from('not an address')).toBeNull();
+    });
+
+    it('sends nothing for a page whose own address cannot be read', () => {
+        expect(withoutQueries({ n: 'pageview', u: 'not an address', d: 'x' })).toBeNull();
     });
 
     it('leaves the page as it was when the tracker cannot start', () => {
