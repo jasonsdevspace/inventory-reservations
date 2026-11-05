@@ -59,7 +59,11 @@ body {
         sans-serif;
 }
 
-/* Whose demo this is, above the page: two links, one line, scrolls away. */
+/*
+ * Whose demo this is, above the page: three links together on the left, scrolls away.
+ * Every demo on jasonsdevspace.com draws this strip alike. A demo with its own switches sets
+ * them on the right, and this one has none.
+ */
 .portfolio {
     border-bottom: 1px solid var(--line);
     font-size: 0.9rem;
@@ -68,19 +72,30 @@ body {
 .portfolio-row {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: center;
-    gap: 0 16px;
+    gap: 0 1.5rem;
     max-width: 1040px;
     margin: 0 auto;
     padding: 0 16px;
+}
+
+/* On a phone the links are smaller and closer together, and wrap to a second row where they must. */
+@media (max-width: 48rem) {
+    .portfolio {
+        font-size: 0.85rem;
+    }
+
+    .portfolio-row {
+        gap: 0 1rem;
+    }
 }
 
 /* The whole row height is the target, not the one line of small text. */
 .portfolio a {
     display: inline-flex;
     align-items: center;
-    min-height: 40px;
+    min-height: 2.5rem;
 }
 
 .portfolio a,

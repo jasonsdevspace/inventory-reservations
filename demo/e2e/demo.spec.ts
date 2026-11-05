@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, type Page, test } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 
 /*
  * A visit to the built demo.
@@ -48,6 +48,68 @@ test('arrives on the page, says whose demo it is, and has no audit findings', as
     await expect(strip.getByRole('link', { name: 'Source on GitHub' })).toBeVisible();
     await ready(page);
     await audit(page);
+});
+
+/** Where the strip's links sit, and how tall the strip is, as the screen draws it. */
+const stripLayout = async (page: Page) => {
+    const strip = page.getByRole('navigation', { name: 'Portfolio' });
+    const box = async (locator: Locator, what: string) => {
+        const drawn = await locator.boundingBox();
+        if (!drawn) throw new Error(`expected ${what} to be drawn`);
+        return drawn;
+    };
+    const links = await Promise.all(
+        (await strip.getByRole('link').all()).map((link, i) => box(link, `link ${String(i + 1)}`))
+    );
+    const row = await box(strip.locator('.portfolio-row'), "the strip's row");
+    const first = links[0];
+    if (!first) throw new Error('expected the strip to have links');
+    return {
+        height: Math.round((await box(strip, 'the strip')).height),
+        startsAtRow: Math.round(first.x - row.x),
+        inset: Math.round(first.x),
+        starts: links.map((link) => Math.round(link.x)),
+        tops: links.map((link) => Math.round(link.y)),
+        // Between links on one row, so a link that wrapped is told by its top, not its gap.
+        gaps: links.slice(1).flatMap((link, i) => {
+            const before = links[i];
+            if (before?.y !== link.y) return [];
+            return [Math.round(link.x - (before.x + before.width))];
+        }),
+    };
+};
+
+test('draws the strip on a wide screen as every demo does, its links together on the left', async ({
+    page,
+    isMobile,
+}) => {
+    test.skip(isMobile, 'the phone project checks the phone');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await visit(page);
+    // The row's own inset, then the links side by side, one row tall over the rule below it.
+    expect(await stripLayout(page)).toMatchObject({
+        height: 41,
+        startsAtRow: 16,
+        tops: [0, 0, 0],
+        gaps: [24, 24],
+    });
+});
+
+test('draws the strip on a phone in rows of links 16px apart', async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'the desktop project checks the wide screen');
+    // Where the links wrap depends on the font, so what is held is what any font gives: links on
+    // one row 16px apart, each row a link's height below the last, and a link that wraps starting
+    // at the row's inset.
+    for (const width of [412, 360]) {
+        await page.setViewportSize({ width, height: 800 });
+        await visit(page);
+        const { tops, gaps, starts, inset } = await stripLayout(page);
+        expect(gaps.every((gap) => gap === 16)).toBe(true);
+        expect(tops.every((top) => top % 40 === 0)).toBe(true);
+        tops.forEach((top, i) => {
+            if (i > 0 && top !== tops[i - 1]) expect(starts[i]).toBe(inset);
+        });
+    }
 });
 
 test('walks the race to its end: oversold without protection, sold once with a lock', async ({
