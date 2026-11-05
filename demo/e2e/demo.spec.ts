@@ -67,6 +67,8 @@ const stripLayout = async (page: Page) => {
     return {
         height: Math.round((await box(strip, 'the strip')).height),
         startsAtRow: Math.round(first.x - row.x),
+        inset: Math.round(first.x),
+        starts: links.map((link) => Math.round(link.x)),
         tops: links.map((link) => Math.round(link.y)),
         // Between links on one row, so a link that wrapped is told by its top, not its gap.
         gaps: links.slice(1).flatMap((link, i) => {
@@ -85,7 +87,7 @@ test('draws the strip on a wide screen as every demo does, its links together on
     await page.setViewportSize({ width: 1280, height: 800 });
     await visit(page);
     // The row's own inset, then the links side by side, one row tall over the rule below it.
-    expect(await stripLayout(page)).toEqual({
+    expect(await stripLayout(page)).toMatchObject({
         height: 41,
         startsAtRow: 16,
         tops: [0, 0, 0],
@@ -93,16 +95,21 @@ test('draws the strip on a wide screen as every demo does, its links together on
     });
 });
 
-test('draws the strip on a phone in one row where it fits, wrapping the last link where not', async ({
-    page,
-    isMobile,
-}) => {
+test('draws the strip on a phone in rows of links 16px apart', async ({ page, isMobile }) => {
     test.skip(!isMobile, 'the desktop project checks the wide screen');
-    await visit(page);
-    expect(await stripLayout(page)).toMatchObject({ height: 41, tops: [0, 0, 0], gaps: [16, 16] });
-    // Narrower still, the last link takes a row of its own below the first two.
-    await page.setViewportSize({ width: 360, height: 800 });
-    expect(await stripLayout(page)).toMatchObject({ height: 81, tops: [0, 0, 40], gaps: [16] });
+    // Where the links wrap depends on the font, so what is held is what any font gives: links on
+    // one row 16px apart, each row a link's height below the last, and a link that wraps starting
+    // at the row's inset.
+    for (const width of [412, 360]) {
+        await page.setViewportSize({ width, height: 800 });
+        await visit(page);
+        const { tops, gaps, starts, inset } = await stripLayout(page);
+        expect(gaps.every((gap) => gap === 16)).toBe(true);
+        expect(tops.every((top) => top % 40 === 0)).toBe(true);
+        tops.forEach((top, i) => {
+            if (i > 0 && top !== tops[i - 1]) expect(starts[i]).toBe(inset);
+        });
+    }
 });
 
 test('walks the race to its end: oversold without protection, sold once with a lock', async ({
