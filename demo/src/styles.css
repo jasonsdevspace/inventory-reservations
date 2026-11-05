@@ -60,9 +60,9 @@ body {
 }
 
 /*
- * Whose demo this is, above the page: three links together on the left, one line, scrolls away.
- * Every demo on jasonsdevspace.com draws this strip alike, with room on the right for a demo's
- * own switches, which this one has none of.
+ * Whose demo this is, above the page: three links together on the left, scrolls away.
+ * Every demo on jasonsdevspace.com draws this strip alike. A demo with its own switches sets
+ * them on the right, and this one has none.
  */
 .portfolio {
     border-bottom: 1px solid var(--line);
