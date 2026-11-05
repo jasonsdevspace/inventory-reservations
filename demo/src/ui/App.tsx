@@ -89,8 +89,11 @@ export const App = () => {
 
     return (
         <>
+            <a className="skip" href="#main-content">
+                Skip to content
+            </a>
             <PortfolioStrip />
-            <main>
+            <main id="main-content" tabIndex={-1}>
                 <header className="intro">
                     <h1>inventory-reservations</h1>
                     <p className="lede">

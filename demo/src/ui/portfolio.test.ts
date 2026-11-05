@@ -34,7 +34,7 @@ describe('whose demo this is', () => {
             [ABOUT_URL, 'How it works'],
             [REPO_URL, 'Source on GitHub'],
         ]);
-        expect(html.indexOf('<nav class="portfolio"')).toBeLessThan(html.indexOf('<main>'));
+        expect(html.indexOf('<nav class="portfolio"')).toBeLessThan(html.indexOf('<main'));
         expect(strip?.[0]).not.toContain('target=');
     });
 
