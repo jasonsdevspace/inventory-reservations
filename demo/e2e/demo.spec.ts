@@ -50,6 +50,37 @@ test('arrives on the page, says whose demo it is, and has no audit findings', as
     await audit(page);
 });
 
+/** Where the strip's links sit, and how tall the strip is, as the screen draws it. */
+const stripLayout = async (page: Page) => {
+    const strip = page.getByRole('navigation', { name: 'Portfolio' });
+    const box = async (locator: ReturnType<Page['locator']>) => {
+        const drawn = await locator.boundingBox();
+        if (!drawn) throw new Error('expected the strip to be drawn');
+        return drawn;
+    };
+    const links = await Promise.all((await strip.getByRole('link').all()).map(box));
+    const row = await box(strip.locator('.portfolio-row'));
+    return {
+        height: Math.round((await box(strip)).height),
+        startsAtRow: Math.round((links[0]?.x ?? 0) - row.x),
+        gaps: links
+            .slice(1)
+            .map((link, i) => Math.round(link.x - ((links[i]?.x ?? 0) + (links[i]?.width ?? 0)))),
+    };
+};
+
+test('draws the strip as every demo does, its three links together on the left', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await visit(page);
+    // The row's own inset, then the links side by side, one row tall over the rule below it.
+    expect(await stripLayout(page)).toEqual({ height: 41, startsAtRow: 16, gaps: [24, 24] });
+    // A phone is too narrow for all three, so the last wraps, and the first two sit closer.
+    await page.setViewportSize({ width: 390, height: 800 });
+    expect((await stripLayout(page)).gaps[0]).toBe(16);
+});
+
 test('walks the race to its end: oversold without protection, sold once with a lock', async ({
     page,
 }) => {
