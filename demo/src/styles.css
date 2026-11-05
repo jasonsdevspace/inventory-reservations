@@ -74,7 +74,7 @@ body {
     flex-wrap: wrap;
     justify-content: flex-start;
     align-items: center;
-    gap: 0 24px;
+    gap: 0 1.5rem;
     max-width: 1040px;
     margin: 0 auto;
     padding: 0 16px;
@@ -87,7 +87,7 @@ body {
     }
 
     .portfolio-row {
-        gap: 0 16px;
+        gap: 0 1rem;
     }
 }
 
@@ -95,7 +95,7 @@ body {
 .portfolio a {
     display: inline-flex;
     align-items: center;
-    min-height: 40px;
+    min-height: 2.5rem;
 }
 
 .portfolio a,
