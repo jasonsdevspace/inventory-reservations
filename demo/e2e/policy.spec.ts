@@ -1,10 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
 
 /*
- * Both pages carry a Content Security Policy that allows only their own origin, the one inline
- * script, the WebAssembly Postgres runs as and a connection to Plausible. Anything a page does
- * that the policy refuses shows up as a violation, so the demo is used end to end and the
- * explainer read with every violation collected, and none is allowed.
+ * Both pages carry a Content Security Policy that allows only their own origin, images as data
+ * URLs, the one inline script, the WebAssembly Postgres runs as and a connection to Plausible.
+ * Anything a page does that the policy refuses shows up as a violation, so the demo boots and
+ * places an order and the explainer opens with every violation collected, and none is allowed.
  */
 
 const watch = async (page: Page): Promise<string[]> => {
@@ -31,7 +31,7 @@ test('the demo and the explainer run within their policy', async ({ page }) => {
         'content',
         /script-src 'self' 'wasm-unsafe-eval' 'sha256-/
     );
-    // Visit counts are sent to Plausible, and nothing else leaves for another origin.
+    // The page may connect to Plausible for the visit counts, and to no other origin.
     await expect(policy).toHaveAttribute('content', /connect-src 'self' https:\/\/plausible\.io;/);
     const live = page.getByRole('region', { name: 'Run the service' });
     await expect(live.getByRole('region', { name: 'Working with DEMO-1' })).toBeVisible({

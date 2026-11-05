@@ -4,7 +4,7 @@
     --text: #1d1d1b;
     --muted: #5f5f5a;
     --line: #e2e1dc;
-    /* A control's edge, at 3:1 or more on the page and on a card, where a rule's line is too faint. */
+    /* A control's edge, at 3:1 or more on the page and a card. A rule's line is too faint. */
     --control: #85847e;
     --accent: #2f5bd3;
     /* Deep enough to carry text on the surface at 4.5:1, as well as the bar. */
@@ -179,7 +179,7 @@ button:hover:not(:disabled) {
 
 /*
  * One focus ring for every link and control, in the accent color, drawn only when the browser
- * would show focus. A section the page moves focus to is not a control, and has no ring.
+ * would show focus. A section the page moves focus to is not a control, so it is left out.
  */
 :where(a[href], button, input, select, textarea, summary, [tabindex='0']):focus-visible {
     outline: 2px solid var(--accent);
@@ -197,7 +197,7 @@ button:disabled {
     cursor: default;
 }
 
-button[aria-pressed='true'] {
+button[aria-pressed='true']:not(:disabled) {
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
 }
@@ -689,10 +689,7 @@ details summary {
     white-space: nowrap;
 }
 
-/*
- * The explainer at about/: prose at the lede's reading measure, in the
- * page column, with the demo's own steps for type and space.
- */
+/* The skip link on both pages, out of sight until the keyboard reaches it. */
 .skip {
     position: absolute;
     left: 16px;
@@ -709,6 +706,10 @@ details summary {
     top: 16px;
 }
 
+/*
+ * The explainer at about/: prose at the lede's reading measure, in the
+ * page column, with the demo's own steps for type and space.
+ */
 .about {
     max-width: 70ch;
 }

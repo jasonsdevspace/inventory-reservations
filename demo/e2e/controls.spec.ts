@@ -1,9 +1,10 @@
 import { expect, type Page, test } from '@playwright/test';
 
 /*
- * What a visitor needs to see of the controls, in both themes: each control's edge against
- * what it sits on, the ring that shows where focus is on every link and control, and a
- * button that is off drawn in colors of its own rather than faded to whatever is behind it.
+ * What a visitor needs to see of the controls. In both themes, each control's edge holds 3:1
+ * against what it sits on and against its own fill, and a button that is off is drawn in colors
+ * of its own rather than faded to whatever is behind it. In the light theme, each link and
+ * control the keyboard reaches shows the accent ring.
  *
  * Measured in the page, as the browser draws it. The tests' own types have no DOM, so the
  * measuring is written as the page's script.
@@ -43,7 +44,7 @@ const MEASURE = `
     };
 `;
 
-/** The lowest contrast any button's or field's edge has against what it sits on, by selector. */
+/** Each kind of control's weakest edge, against what it sits on or its own fill. */
 const weakestEdges = (page: Page) =>
     page.evaluate<Record<string, number>>(`(() => {
         ${MEASURE}
@@ -72,7 +73,12 @@ for (const theme of THEMES) {
                 name: 'Working with DEMO-1',
             })
         ).toBeVisible({ timeout: 60_000 });
-        const weak = Object.entries(await weakestEdges(page)).filter(([, edge]) => edge < 3);
+        const demo = await weakestEdges(page);
+        // The explainer's button to open the demo is a link drawn as a button.
+        await page.goto('./about/');
+        const about = await weakestEdges(page);
+        expect(about).toHaveProperty(['a.tour-try']);
+        const weak = Object.entries({ ...demo, ...about }).filter(([, edge]) => edge < 3);
         expect(weak).toEqual([]);
     });
 
@@ -82,13 +88,20 @@ for (const theme of THEMES) {
         const next = race.getByRole('button', { name: 'Next step' });
         for (let step = 0; step < 8 && (await next.isEnabled()); step += 1) await next.click();
         await expect(next).toBeDisabled();
-        const [drawn] = await page.evaluate<{ opacity: string; text: number }[]>(`(() => {
+        const off = await page.evaluate<
+            { label: string; opacity: string; text: number }[]
+        >(`(() => {
             ${MEASURE}
             return [...document.querySelectorAll('button:disabled')].map((button) => {
                 const style = getComputedStyle(button);
-                return { opacity: style.opacity, text: contrast(style.color, style.backgroundColor) };
+                return {
+                    label: button.textContent.trim(),
+                    opacity: style.opacity,
+                    text: contrast(style.color, style.backgroundColor),
+                };
             });
         })()`);
+        const drawn = off.find(({ label }) => label === 'Next step');
         // Faded, its colors would be whatever shows through, so it is drawn whole, its
         // label still readable.
         expect(drawn?.opacity).toBe('1');

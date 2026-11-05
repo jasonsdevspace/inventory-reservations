@@ -10,16 +10,17 @@ import type { Plugin } from 'vite';
  * the pages cannot drift on the storage key or the fallback.
  *
  * A built page also gets its Content Security Policy here, as a meta tag
- * ahead of everything else in the head, since GitHub Pages sends no headers
- * of its own. Everything a page loads comes from its own origin, so the
- * policy allows that, the one inline script by its hash, the WebAssembly
- * Postgres runs as, and the visit counts' connection to Plausible, and
- * nothing else. The dev server is left without one, since Vite injects its
- * styles and its client inline while it serves.
+ * right after the charset, since GitHub Pages sends no headers of its own.
+ * Everything a page loads comes from its own origin, so the policy allows
+ * that, images as data URLs, the one inline script by its hash, the
+ * WebAssembly Postgres runs as, and the visit counts' connection to
+ * Plausible, and nothing else. The dev server is left without one, since
+ * Vite injects its styles and its client inline while it serves.
  *
  * Beside it goes a referrer policy that hands any page the visitor goes on
- * to the site's origin and nothing more, so a link out never carries the
- * page's address with it.
+ * to the site's origin and nothing more. A browser already does that for
+ * another site, but the portfolio and the other demos share this origin,
+ * and its own default would hand them the page's whole address.
  */
 const PLACEHOLDER = '<!-- theme-script -->';
 const CHARSET = '<meta charset="utf-8" />';
