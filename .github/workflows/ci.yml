@@ -137,8 +137,20 @@ jobs:
             - name: Type-check and build
               run: npm run build
 
+            # The runner image has the libraries Chromium needs, so only the browser is
+            # fetched. Installing the libraries again reads Ubuntu's mirror, which has been
+            # slow enough to run a job out of time before its tests began. Both the headless shell
+            # the browser tests use and the full Chromium Lighthouse runs are started once here, so
+            # a library a later runner image lacks fails this step, not a test.
             - name: Install Chromium
-              run: npx playwright install --with-deps chromium
+              timeout-minutes: 3
+              run: |
+                  npx playwright install chromium
+                  node -e "
+                      const { chromium } = require('@playwright/test');
+                      const start = (options) => chromium.launch({ timeout: 30_000, ...options }).then((b) => b.close());
+                      start({}).then(() => start({ channel: 'chromium' }));
+                  "
 
             - name: Browser tests
               run: npm run e2e
