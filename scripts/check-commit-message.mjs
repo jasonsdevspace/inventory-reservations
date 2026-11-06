@@ -7,7 +7,8 @@
  * the commit exists rather than cleaned up after. Em dashes and semicolons
  * joining clauses are refused too, as everywhere else. Run by the commit-msg
  * hook with the path to the message file, and by CI with `--as-is` for a
- * pull request's title and body, which GitHub keeps whole when it squashes,
+ * pull request's title, which GitHub writes as the commit when it squashes,
+ * and its body, which a reader of the pull request sees, each as written,
  * lines that start like git's comments included.
  */
 import { execFileSync } from 'node:child_process';

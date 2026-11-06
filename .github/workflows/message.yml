@@ -1,9 +1,10 @@
 name: Pull request message
 
-# A pull request's title and body become the commit on main when it is
-# squashed, written on GitHub where no hook runs, so they pass the same check
-# a commit message does, as written, headings included. Its own workflow, so
-# an edit to the title or body checks them again without running CI.
+# A pull request's title, with its number, becomes the commit on main when it is
+# squashed, and its body is what a reader of the pull request sees. Both are
+# written on GitHub where no hook runs, so they pass the same check a commit
+# message does, as written, headings included. The check is a workflow of its
+# own, so an edit to the title or body runs it again without running CI.
 # Dependabot's body quotes release notes written elsewhere, so only its title
 # is held to the house rules.
 on:
