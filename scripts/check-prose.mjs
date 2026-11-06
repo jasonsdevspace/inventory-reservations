@@ -17,9 +17,9 @@
  *
  * Run with `npm run prose`.
  */
-import { basename, extname } from 'node:path';
+import { extname } from 'node:path';
 
-import { isRunDirectly, repositoryFiles } from './repository.mjs';
+import { isDockerfile, isRunDirectly, repositoryFiles } from './repository.mjs';
 
 const SCANNED = new Set([
     '.ts',
@@ -34,9 +34,6 @@ const SCANNED = new Set([
     '.html',
     '.sh',
 ]);
-
-/** Files with no extension that still carry comments worth checking. */
-const SCANNED_NAMES = new Set(['Dockerfile']);
 
 /**
  * Built from its code point rather than written literally, so this file does
@@ -78,7 +75,7 @@ const BRITISH_SPELLINGS = new RegExp(
 const commentStart = (path) => {
     const ext = extname(path);
     if (ext === '.sql') return '--';
-    if (['.yml', '.yaml', '.sh'].includes(ext) || SCANNED_NAMES.has(basename(path))) return '#';
+    if (['.yml', '.yaml', '.sh'].includes(ext) || isDockerfile(path)) return '#';
     return '\\/\\/|\\{?\\/\\*+|\\*(?!\\/)';
 };
 
@@ -165,7 +162,7 @@ export const problemsIn = (text, { issues }) =>
     ].filter((rule) => typeof rule === 'string');
 
 /** @param {string} path */
-const isScanned = (path) => SCANNED.has(extname(path)) || SCANNED_NAMES.has(basename(path));
+const isScanned = (path) => SCANNED.has(extname(path)) || isDockerfile(path);
 
 /**
  * Every problem in one file, as `path:line  rule` with the line beneath.

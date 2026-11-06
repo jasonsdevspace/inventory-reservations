@@ -4,5 +4,5 @@
         "allowJs": true,
         "checkJs": true
     },
-    "include": ["*.test.ts"]
+    "include": ["*.test.ts", "test-repository.ts"]
 }

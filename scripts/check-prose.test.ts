@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { proseProblems } from './check-prose.mjs';
+import { runCheckIn } from './test-repository.js';
 
 const DASH = String.fromCodePoint(0x2014);
 const rules = (path: string, source: string): string[] =>
@@ -85,5 +86,131 @@ describe('the prose check', () => {
             'docker/Dockerfile:1  British spelling',
         ]);
         expect(rules('logo.svg', '<!-- one; two -->')).toEqual([]);
+    });
+});
+
+describe('the words the prose check refuses', () => {
+    it.each([
+        'TODO',
+        'FIXME',
+        'XXX',
+        'HACK',
+        'TBD',
+        'coming soon',
+        'not implemented',
+        'waiting on',
+        'to be decided',
+        'to be determined',
+        'for now leave',
+        'for now, leave',
+        'for now skip',
+    ])('refuses the process artifact %j in a comment', (words) => {
+        expect(rules('a.ts', `// The search, ${words} the rest\n`)).toEqual([
+            'a.ts:1  process artifact',
+        ]);
+    });
+
+    it.each([
+        'issue 12',
+        'issue #12',
+        'issue#12',
+        'issues 12',
+        'ticket 12',
+        'tickets 12',
+        'PR 12',
+        'PRs 12',
+        'pull request 12',
+        'pull requests 12',
+        'the fix (#12)',
+        'GH-12',
+    ])('refuses the issue form %j in a comment', (words) => {
+        expect(rules('a.ts', `// As in ${words} here\n`)).toEqual(['a.ts:1  issue reference']);
+    });
+
+    it.each([
+        ...[
+            ...['serialis', 'initialis', 'recognis', 'unrecognis', 'organis', 'prioritis'],
+            ...['optimis', 'normalis', 'parameteris', 'authoris', 'utilis', 'minimis'],
+            ...['summaris', 'customis', 'standardis', 'synchronis', 'categoris'],
+        ].map((stem) => `${stem}e`),
+        ...['es', 'ed', 'ing', 'ation', 'ations', 'able', 'er', 'ers'].map(
+            (end) => `organis${end}`
+        ),
+        ...['behaviour', 'favour', 'colour', 'honour', 'labour', 'neighbour'],
+        ...['s', 'ed', 'ing', 'ite', 'ites', 'al', 'ally'].map((end) => `behaviour${end}`),
+        ...['catalogue', 'catalogues', 'analyse', 'analysed', 'analysing', 'centre', 'centres'],
+        ...['licence', 'defence', 'whilst', 'amongst'],
+        ...['cancelled', 'modelled', 'travelled', 'labelled', 'labelling'],
+    ])('refuses the British spelling %j in a comment', (word) => {
+        expect(rules('a.ts', `// The ${word} here\n`)).toEqual(['a.ts:1  British spelling']);
+    });
+
+    it('passes the American forms and the words that only end like a British one', () => {
+        expect(
+            rules('a.ts', '// A promise, otherwise precise, to serialize the canceled behavior\n')
+        ).toEqual([]);
+    });
+});
+
+describe('what the prose check reads', () => {
+    it.each([
+        ['a.ts', '// One; two\n'],
+        ['a.tsx', '// One; two\n'],
+        ['a.js', '// One; two\n'],
+        ['a.mjs', '// One; two\n'],
+        ['a.cjs', '// One; two\n'],
+        ['a.md', 'One; two\n'],
+        ['a.yml', '# One; two\n'],
+        ['a.yaml', '# One; two\n'],
+        ['a.sql', '-- One; two\n'],
+        ['a.html', '<p>One; two</p>\n'],
+        ['a.sh', '# One; two\n'],
+        ['Dockerfile', '# One; two\n'],
+        ['docker/Dockerfile.prod', '# One; two\n'],
+        ['api.Dockerfile', '# One; two\n'],
+    ])('reads %s in its own comment style', (path, source) => {
+        expect(rules(path, source)).toEqual([`${path}:1  semicolon in prose`]);
+    });
+
+    it.each([
+        '<img alt="One; two" src="a.png">',
+        '<abbr title="One; two">x</abbr>',
+        '<button aria-label="One; two"></button>',
+        '<button aria-description="One; two"></button>',
+        '<input placeholder="One; two">',
+        '<meta name="description" content="One; two">',
+        '<meta property="og:description" content="One; two">',
+        '<meta property="og:title" content="One; two">',
+        '<meta name="twitter:description" content="One; two">',
+    ])('reads the words a visitor is shown in %s', (tag) => {
+        expect(rules('index.html', `${tag}\n`)).toEqual(['index.html:1  semicolon in prose']);
+    });
+
+    it('leaves entities alone in Markdown and in a page', () => {
+        expect(rules('a.md', 'Fish &amp; chips, and &lt;b&gt; for bold.\n')).toEqual([]);
+        expect(rules('index.html', '<p>Fish &amp; chips, and &lt;b&gt; for bold.</p>\n')).toEqual(
+            []
+        );
+    });
+});
+
+/** The check's status and what it wrote to stderr, run over a throwaway repository. */
+const runIn = (files: Record<string, string>) => {
+    const { status, stderr } = runCheckIn('check-prose.mjs', files);
+    return { status, stderr };
+};
+
+describe('the prose check, run as a command', () => {
+    it('exits 0 on plain prose', () => {
+        expect(runIn({ 'README.md': 'One sentence. Then another.\n' })).toEqual({
+            status: 0,
+            stderr: '',
+        });
+    });
+
+    it('exits 1 and names the line on a semicolon joining clauses', () => {
+        const result = runIn({ 'README.md': 'One clause; then another.\n' });
+        expect(result.stderr).toContain('README.md:1  semicolon in prose');
+        expect(result.status).toBe(1);
     });
 });

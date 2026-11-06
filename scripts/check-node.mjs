@@ -19,14 +19,7 @@
  */
 import { basename } from 'node:path';
 
-import { isRunDirectly, repositoryFiles } from './repository.mjs';
-
-/**
- * A Dockerfile by any of the names Docker tooling uses for one.
- *
- * @param {string} path
- */
-const isDockerfile = (path) => /^Dockerfile(\..+)?$|\.Dockerfile$/.test(basename(path));
+import { isDockerfile, isRunDirectly, repositoryFiles } from './repository.mjs';
 
 /**
  * The parts of a package.json this reads, each `unknown` until looked at.
@@ -41,22 +34,34 @@ const isDockerfile = (path) => /^Dockerfile(\..+)?$|\.Dockerfile$/.test(basename
  */
 
 /**
- * The majors a range admits, as the first and the first one past it. Only the
- * forms written here are understood: `>=N`, `>=N <M`, `^N`, `~N`, `N` and
- * `N.x`, each with or without minor and patch numbers.
+ * The majors a range admits, as the first and, if the range has an upper
+ * bound, the first one past it, and whether it admits every version of its
+ * first major. Only the forms written here are understood: `>=N`, `>=N <M`,
+ * `^N`, `~N`, `N` and `N.x`, each with or without minor and patch numbers. A
+ * minor, zero included, narrows `~N.M` and `N.M` to that minor, and a minor or
+ * patch past zero starts `^N.M` and `>=N.M` past the major's first release.
  *
  * @param {unknown} range
- * @returns {{ from: number, below: number | undefined } | undefined}
+ * @returns {{ from: number, below: number | undefined, whole: boolean } | undefined}
  */
 const majorsOf = (range) => {
     if (typeof range !== 'string') return undefined;
-    const pinned = /^[\^~]?(\d+)(?:\.(?:\d+|x)){0,2}$/.exec(range.trim());
-    if (pinned) return { from: Number(pinned[1]), below: Number(pinned[1]) + 1 };
-    const span = /^>=\s*(\d+)(?:\.\d+){0,2}(?:\s+<\s*(\d+)(?:\.0){0,2})?$/.exec(range.trim());
+    const pinned = /^([\^~]?)(\d+)((?:\.(?:\d+|x)){0,2})$/.exec(range.trim());
+    if (pinned) {
+        const [, operator, first, rest = ''] = pinned;
+        const parts = rest.split('.').slice(1);
+        const whole =
+            operator === '^'
+                ? parts.every((part) => part === '0' || part === 'x')
+                : parts.every((part) => part === 'x');
+        return { from: Number(first), below: Number(first) + 1, whole };
+    }
+    const span = /^>=\s*(\d+)((?:\.\d+){0,2})(?:\s+<\s*(\d+)(?:\.0){0,2})?$/.exec(range.trim());
     if (span)
         return {
             from: Number(span[1]),
-            below: span[2] === undefined ? undefined : Number(span[2]),
+            below: span[3] === undefined ? undefined : Number(span[3]),
+            whole: (span[2] ?? '').split('.').every((part) => part === '' || part === '0'),
         };
     return undefined;
 };
@@ -75,7 +80,7 @@ const checkEngines = (path, pkg, major) => {
         return path === 'package.json' ? [`${path}: engines.node is missing`] : [];
     const majors = majorsOf(engines);
     if (pkg.private === true) {
-        return majors?.from === major && majors.below === major + 1
+        return majors?.from === major && majors.below === major + 1 && majors.whole
             ? []
             : [
                   `${path}: engines.node is ${JSON.stringify(engines)}, expected ">=${major} <${major + 1}"`,

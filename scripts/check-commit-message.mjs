@@ -6,14 +6,16 @@
  * human or otherwise, is not part of that, so the message is rejected before
  * the commit exists rather than cleaned up after. Em dashes and semicolons
  * joining clauses are refused too, as everywhere else. Run by the commit-msg
- * hook with the path to the message file.
+ * hook with the path to the message file, and by CI with `--as-is` for a
+ * pull request's title and body, which GitHub keeps whole when it squashes,
+ * lines that start like git's comments included.
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 import { isRunDirectly } from './repository.mjs';
 
-const TOOLS = [
+export const TOOLS = [
     /\bclaude\b/i,
     /\banthropic\b/i,
     /\bchatgpt\b/i,
@@ -32,8 +34,10 @@ const EM_DASH = String.fromCodePoint(0x2014);
 /**
  * The message git will store: everything above the scissors line that
  * `git commit -v` adds before the diff, without git's own comment lines.
- * The scissors line is found by its shape, whatever comment character git
- * chose, since with `core.commentChar` set to `auto` it picks one per commit.
+ * The scissors line is found by its shape, whatever comment prefix git wrote
+ * on it, since with `core.commentChar` set to `auto` git picks one per commit.
+ * When there is one, its prefix marks the comment lines in place of the one
+ * passed in.
  *
  * @param {string} raw
  * @param {string} commentChar
@@ -41,12 +45,24 @@ const EM_DASH = String.fromCodePoint(0x2014);
  */
 export const storedMessage = (raw, commentChar) => {
     const lines = raw.split('\n');
-    const scissors = lines.findIndex((line) => /^\S -{24} >8 -{24}$/.test(line));
-    const comment = scissors === -1 ? commentChar : (lines[scissors]?.[0] ?? commentChar);
+    const scissors = lines.findIndex((line) => /^\S+ -{24} >8 -{24}$/.test(line));
+    const comment = scissors === -1 ? commentChar : (lines[scissors]?.split(' ')[0] ?? commentChar);
     return (scissors === -1 ? lines : lines.slice(0, scissors))
         .filter((line) => !line.startsWith(comment))
         .join('\n');
 };
+
+/**
+ * The text to check: the message as git will store it, or, for one GitHub
+ * writes as it is, every line of it.
+ *
+ * @param {string} raw
+ * @param {string} commentChar
+ * @param {boolean} asIs
+ * @returns {string}
+ */
+export const textToCheck = (raw, commentChar, asIs) =>
+    asIs ? raw : storedMessage(raw, commentChar);
 
 /**
  * What is wrong with a stored message, one line per problem.
@@ -65,12 +81,20 @@ export const messageProblems = (message) => [
         : []),
 ];
 
-/** The comment character git uses for this repository, `#` unless set otherwise. */
+/**
+ * What git starts a comment line with in this repository, `#` when unset.
+ * Newer git reads `core.commentString` as well as `core.commentChar`, and
+ * whichever comes last in its config wins. `auto` is read as `#`, the one git
+ * picks unless the message already has a line starting with it.
+ */
 const commentCharacter = () => {
     try {
-        const set = execFileSync('git', ['config', 'core.commentChar'], {
-            encoding: 'utf8',
-        }).trim();
+        const settings = execFileSync(
+            'git',
+            ['config', '--get-regexp', '^core\\.comment(char|string)$'],
+            { encoding: 'utf8' }
+        ).trim();
+        const set = settings.split('\n').at(-1)?.split(' ').slice(1).join(' ') ?? '';
         return set === '' || set === 'auto' ? '#' : set;
     } catch {
         return '#';
@@ -78,13 +102,15 @@ const commentCharacter = () => {
 };
 
 const main = () => {
-    const [, , messagePath] = process.argv;
+    const args = process.argv.slice(2);
+    const asIs = args.includes('--as-is');
+    const messagePath = args.find((arg) => arg !== '--as-is');
     if (!messagePath) {
-        console.error('usage: check-commit-message.mjs <path to the commit message>');
+        console.error('usage: check-commit-message.mjs [--as-is] <path to the commit message>');
         process.exit(2);
     }
     const problems = messageProblems(
-        storedMessage(readFileSync(messagePath, 'utf8'), commentCharacter())
+        textToCheck(readFileSync(messagePath, 'utf8'), commentCharacter(), asIs)
     );
     if (problems.length > 0) {
         console.error(

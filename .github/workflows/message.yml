@@ -1,0 +1,48 @@
+name: Pull request message
+
+# A pull request's title and body become the commit on main when it is
+# squashed, written on GitHub where no hook runs, so they pass the same check
+# a commit message does, as written, headings included. Its own workflow, so
+# an edit to the title or body checks them again without running CI.
+# Dependabot's body quotes release notes written elsewhere, so only its title
+# is held to the house rules.
+on:
+    pull_request:
+        types: [opened, edited, reopened, synchronize]
+
+permissions:
+    contents: read
+
+concurrency:
+    group: message-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    message:
+        name: PR title and body
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            # The Node the repository names in .nvmrc, not the runner's own.
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+
+            - name: Check the title and body
+              env:
+                  TITLE: ${{ github.event.pull_request.title }}
+                  BODY: ${{ github.event.pull_request.body }}
+                  AUTHOR: ${{ github.event.pull_request.user.login }}
+              run: |
+                  if [ "$AUTHOR" = "dependabot[bot]" ]; then
+                      printf '%s\n' "$TITLE" > "$RUNNER_TEMP/message"
+                  else
+                      printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/message"
+                  fi
+                  node scripts/check-commit-message.mjs --as-is "$RUNNER_TEMP/message"

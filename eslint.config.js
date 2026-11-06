@@ -45,6 +45,8 @@ const sizeBudgets = {
 };
 
 export default tseslint.config(
+    // A disable comment whose rule no longer fires fails the lint, so it cannot outlive its reason.
+    { linterOptions: { reportUnusedDisableDirectives: 'error' } },
     { ignores: ['**/coverage', '**/node_modules', '**/dist'] },
     {
         extends: [js.configs.recommended, ...tseslint.configs.recommended],
