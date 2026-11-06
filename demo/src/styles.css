@@ -4,6 +4,8 @@
     --text: #1d1d1b;
     --muted: #5f5f5a;
     --line: #e2e1dc;
+    /* A control's edge, at 3:1 or more on the page and a card. A rule's line is too faint. */
+    --control: #85847e;
     --accent: #2f5bd3;
     /* Deep enough to carry text on the surface at 4.5:1, as well as the bar. */
     --reserved: #9e580d;
@@ -31,6 +33,7 @@
     --text: #ecebe6;
     --muted: #a3a29b;
     --line: #33332f;
+    --control: #76756f;
     --accent: #7b9cff;
     --reserved: #e59a4e;
     --held: #a98cf5;
@@ -164,7 +167,7 @@ button {
     font: inherit;
     padding: 8px 14px;
     border-radius: 8px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--control);
     background: var(--surface);
     color: var(--text);
     cursor: pointer;
@@ -174,18 +177,27 @@ button:hover:not(:disabled) {
     border-color: var(--accent);
 }
 
-button:focus-visible,
-input:focus-visible {
+/*
+ * One focus ring for every link and control, in the accent color, drawn only when the browser
+ * would show focus. A section the page moves focus to is not a control, so it is left out.
+ */
+:where(a[href], button, input, select, textarea, summary, [tabindex='0']):focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 
+/*
+ * A button that is off is drawn in colors of its own, its label in the muted text and its edge
+ * a faint line, rather than faded, which would leave its colors to whatever is behind it.
+ */
 button:disabled {
-    opacity: 0.5;
+    color: var(--muted);
+    background: var(--bg);
+    border-color: var(--line);
     cursor: default;
 }
 
-button[aria-pressed='true'] {
+button[aria-pressed='true']:not(:disabled) {
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
 }
@@ -329,7 +341,7 @@ button[aria-pressed='true'] {
     width: 88px;
     padding: 7px 10px;
     border-radius: 8px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--control);
     background: var(--bg);
     color: var(--text);
 }
@@ -677,16 +689,13 @@ details summary {
     white-space: nowrap;
 }
 
-/*
- * The explainer at about/: prose at the lede's reading measure, in the
- * page column, with the demo's own steps for type and space.
- */
+/* The skip link on both pages, out of sight until the keyboard reaches it. */
 .skip {
     position: absolute;
     left: 16px;
     top: -160px;
     padding: 8px 14px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--control);
     border-radius: 8px;
     background: var(--surface);
     color: var(--text);
@@ -695,10 +704,12 @@ details summary {
 
 .skip:focus-visible {
     top: 16px;
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
 }
 
+/*
+ * The explainer at about/: prose at the lede's reading measure, in the
+ * page column, with the demo's own steps for type and space.
+ */
 .about {
     max-width: 70ch;
 }
@@ -785,7 +796,7 @@ details summary {
 .tour-try {
     display: inline-block;
     padding: 8px 14px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--control);
     border-radius: 8px;
     background: var(--surface);
     color: var(--text);
