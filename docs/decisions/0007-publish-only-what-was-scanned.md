@@ -55,8 +55,10 @@ publish job tags that digest only after the tests, the demo and the scan have al
 **The scans run where nothing can be written.** The image job holds the token that pushes, so it
 runs only GitHub's own actions and Docker's build actions. The scans run in a job of their own that
 can only read packages, which reads the pushed image by its digest on main, and on a pull request,
-where nothing is pushed, the image the build wrote to a file. A compromised scanner could then read
-an image and nothing more. A release
+where nothing is pushed, the image the build wrote to a file. Any step of any job can write the
+Actions cache, so the image that ships on main is built from its pinned base images with nothing
+read from that cache. A compromised scanner can read an image, and cannot change the one that
+ships, in the registry or through the cache. A release
 scans the same digest again against the day's vulnerability data, gives it the version as a further
 tag, and attaches the same bill of materials. Nothing is rebuilt along the way.
 

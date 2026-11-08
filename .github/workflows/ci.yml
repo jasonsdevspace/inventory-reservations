@@ -226,6 +226,7 @@ jobs:
         outputs:
             name: ${{ steps.name.outputs.image }}
             digest: ${{ steps.push.outputs.digest }}
+            pushes: ${{ steps.pushes.outputs.pushes }}
         steps:
             - name: Checkout
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -238,13 +239,21 @@ jobs:
               id: name
               run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+            # Whether this run pushes the image, decided once here, for this job's steps and the
+            # scan job: a push to main does, and nothing else.
+            - name: Decide whether the image is pushed
+              id: pushes
+              env:
+                  PUSHES: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+              run: echo "pushes=$PUSHES" >> "$GITHUB_OUTPUT"
+
             - name: Set up Buildx
               uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
             # On a pull request nothing is pushed, so the image is written to a file the scan job
             # reads.
             - name: Build the image
-              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              if: steps.pushes.outputs.pushes != 'true'
               uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
               with:
                   context: .
@@ -254,16 +263,19 @@ jobs:
                   cache-to: type=gha,mode=max
 
             - name: Keep the image for the scan
-              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              if: steps.pushes.outputs.pushes != 'true'
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
               with:
                   name: image
                   path: ${{ runner.temp }}/image.tar
                   if-no-files-found: error
-                  retention-days: 1
+                  # Kept a week, so the scan can be run again, and stored as it is, since a tar
+                  # of compressed layers barely compresses.
+                  retention-days: 7
+                  compression-level: 0
 
             - name: Sign in to the registry
-              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              if: steps.pushes.outputs.pushes == 'true'
               uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
               with:
                   registry: ghcr.io
@@ -272,12 +284,14 @@ jobs:
 
             - name: Build the image and push it by digest
               id: push
-              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              if: steps.pushes.outputs.pushes == 'true'
               uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
               with:
                   context: .
                   outputs: type=image,name=${{ steps.name.outputs.image }},push-by-digest=true,name-canonical=true,push=true
-                  cache-from: type=gha
+                  # Built from its pinned base images and nothing cached, since any step of any job
+                  # can write the Actions cache, so nothing a later job wrote can reach the image
+                  # that ships. Its layers are still cached for the pull requests' builds.
                   cache-to: type=gha,mode=max
                   sbom: true
                   provenance: mode=max
@@ -314,14 +328,14 @@ jobs:
                   trivyignores: .trivyignore.yaml
 
             - name: Fetch the image the pull request built
-              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              if: needs.image.outputs.pushes != 'true'
               uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
               with:
                   name: image
                   path: ${{ runner.temp }}
 
             - name: Sign in to the registry
-              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              if: needs.image.outputs.pushes == 'true'
               uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
               with:
                   registry: ghcr.io
@@ -335,8 +349,9 @@ jobs:
               env:
                   IMAGE: ${{ needs.image.outputs.name }}
                   DIGEST: ${{ needs.image.outputs.digest }}
+                  PUSHES: ${{ needs.image.outputs.pushes }}
               run: |
-                  if [ -n "$DIGEST" ]; then
+                  if [ "$PUSHES" = "true" ]; then
                       echo "ref=$IMAGE@$DIGEST" >> "$GITHUB_OUTPUT"
                       echo "input=" >> "$GITHUB_OUTPUT"
                   else

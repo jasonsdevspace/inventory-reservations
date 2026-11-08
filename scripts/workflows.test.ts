@@ -63,6 +63,32 @@ const jobsOf = (text: string) => {
         }));
 };
 
+/**
+ * The actions from outside GitHub, other than those `allowed`, that run in a job of a workflow which
+ * can write: one that grants itself any write or write-all, or one with no permissions of its own
+ * under a workflow that grants a write. A local action is the repository's own. An action is named
+ * by its owner and repository, whatever path follows, and a container action by its whole name.
+ */
+const outsideActionsWhereWritable = (text: string, allowed: ReadonlySet<string>) => {
+    const plain = withoutComments(text);
+    const above = plain.slice(0, Math.max(0, plain.search(/^jobs:/m)));
+    const writes = (permissions: string) => /:\s*write\b|write-all/.test(permissions);
+    return jobsOf(text)
+        .filter(({ body }) => (/^ {8}permissions:/m.test(body) ? writes(body) : writes(above)))
+        .flatMap(({ id, body }) =>
+            [...body.matchAll(/^\s*-?\s*uses:\s*['"]?([^\s'"#]+)/gm)]
+                .map((match) => match[1] ?? '')
+                .filter((ref) => !ref.startsWith('./'))
+                .map((ref) =>
+                    ref.startsWith('docker://')
+                        ? ref
+                        : (ref.split('@')[0]?.split('/').slice(0, 2).join('/') ?? ref)
+                )
+                .filter((action) => !action.startsWith('actions/') && !allowed.has(action))
+                .map((action) => `${id} ${action}`)
+        );
+};
+
 describe('the workflows', () => {
     const steps = [...workflows.values()].flatMap(stepsOf);
 
@@ -93,39 +119,64 @@ describe('the workflows', () => {
         expect(unready).toEqual([]);
     });
 
-    it("run no action but GitHub's own in a release job that can write to the repository or its packages", () => {
+    it("run no action but GitHub's own in a release job that can write", () => {
         const release = workflows.get('.github/workflows/release.yml') ?? '';
-        const writing = jobsOf(release)
-            .filter(({ body }) => /(?:contents|packages):\s*write/.test(body))
-            .flatMap(({ id, body }) =>
-                [...body.matchAll(/uses: ([\w.-]+)\//g)]
-                    .map((match) => match[1] ?? '')
-                    .filter((owner) => owner !== 'actions')
-                    .map((owner) => `${id} ${owner}`)
-            );
         expect(jobsOf(release).length).toBeGreaterThan(0);
-        expect(writing).toEqual([]);
+        expect(outsideActionsWhereWritable(release, new Set())).toEqual([]);
     });
 
     it('run no third-party action in a CI job that can write, but the build actions a push needs', () => {
         // Docker's own actions to set up the builder, sign in and build, which pushing the image
         // takes. Any other action from outside GitHub runs where nothing can be written.
-        const allowed = new Set([
-            'docker/setup-buildx-action',
-            'docker/login-action',
-            'docker/build-push-action',
-        ]);
         const ci = workflows.get('.github/workflows/ci.yml') ?? '';
-        const writing = jobsOf(ci)
-            .filter(({ body }) => /(?:contents|packages|pages|id-token):\s*write/.test(body))
-            .flatMap(({ id, body }) =>
-                [...body.matchAll(/uses: ([\w.-]+\/[\w.-]+)@/g)]
-                    .map((match) => match[1] ?? '')
-                    .filter((action) => !action.startsWith('actions/') && !allowed.has(action))
-                    .map((action) => `${id} ${action}`)
-            );
         expect(jobsOf(ci).length).toBeGreaterThan(0);
-        expect(writing).toEqual([]);
+        expect(
+            outsideActionsWhereWritable(
+                ci,
+                new Set([
+                    'docker/setup-buildx-action',
+                    'docker/login-action',
+                    'docker/build-push-action',
+                ])
+            )
+        ).toEqual([]);
+    });
+
+    it('find every action and every writing job, however they are written', () => {
+        const workflow = [
+            'permissions:',
+            '    contents: read',
+            'jobs:',
+            '    a:',
+            '        permissions: write-all',
+            '        steps:',
+            "            - uses: 'github/codeql-action/upload-sarif@abc'",
+            '    b:',
+            '        permissions:',
+            '            attestations: write',
+            '        steps:',
+            '            - uses: docker://aquasec/trivy:latest',
+            '    c:',
+            '        steps:',
+            '            - uses: some/action@abc',
+            '    d:',
+            '        permissions:',
+            '            packages: write',
+            '        steps:',
+            '            - uses: actions/checkout@abc',
+            '            - uses: ./.github/actions/local',
+            '            - uses: docker/login-action@abc',
+        ].join('\n');
+        expect(outsideActionsWhereWritable(workflow, new Set(['docker/login-action']))).toEqual([
+            'a github/codeql-action',
+            'b docker://aquasec/trivy:latest',
+        ]);
+        expect(
+            outsideActionsWhereWritable(
+                workflow.replace('    contents: read', '    contents: write'),
+                new Set(['docker/login-action'])
+            )
+        ).toContain('c some/action');
     });
 
     it('run the tests against the database image docker-compose.yml pins', () => {
