@@ -29,6 +29,8 @@ import { launch } from 'chrome-launcher';
 import lighthouse from 'lighthouse';
 import { preview } from 'vite';
 
+import { lighthouseSummary, writeSummary } from '../../scripts/summary.mjs';
+
 const PORT = 4177;
 const ORIGIN = `http://localhost:${PORT}`;
 const RUNS = 3;
@@ -108,27 +110,43 @@ const gate = async (chrome, path) => {
             .map(([name, score]) => `${name} ${Math.round(score * 100)}`)
             .join(', ')}`
     );
-    const failures = [];
+    // What the page missed, in a few words each, which the log gives with the page's path.
+    const misses = [];
     for (const [name, least] of Object.entries(GATES)) {
         if (scores[name] >= least) continue;
         // The run at the median is the one whose audits explain the score.
         const typical = runs.find((run) => run.scores[name] === scores[name]) ?? runs[0];
-        failures.push(
-            `${path}: ${name} below ${least * 100} (${costing(typical.lhr, name).join(', ')})`
-        );
+        misses.push(`${name} below ${least * 100} (${costing(typical.lhr, name).join(', ')})`);
     }
     for (const [id, budget] of Object.entries(TIMINGS)) {
         const value = over('timings', id);
-        if (value > budget)
-            failures.push(`${path}: ${id} ${Math.round(value)} over budget ${budget}`);
+        if (value > budget) misses.push(`${id} ${Math.round(value)} over budget ${budget}`);
     }
     for (const [type, budget] of Object.entries(SIZES)) {
         const value = over('sizes', type);
-        if (value > budget) {
-            failures.push(`${path}: ${type} ${Math.round(value)} KB over budget ${budget} KB`);
-        }
+        if (value > budget) misses.push(`${type} ${Math.round(value)} KB over budget ${budget} KB`);
     }
-    return failures;
+    // The figures for the run's summary, a metric no run reported left out rather than read as
+    // over budget, and a size the middle of the runs that reported one.
+    const measured = (key, id) => {
+        const values = runs.map((run) => run[key][id]).filter((value) => Number.isFinite(value));
+        return values.length === 0 ? undefined : median(values);
+    };
+    const page = {
+        path,
+        scores,
+        held: Object.keys(GATES),
+        paint: measured('timings', 'largest-contentful-paint'),
+        shift: measured('timings', 'cumulative-layout-shift'),
+        sizes: Object.fromEntries(
+            Object.keys(SIZES).flatMap((type) => {
+                const value = measured('sizes', type);
+                return value === undefined ? [] : [[type, value]];
+            })
+        ),
+        failures: misses,
+    };
+    return { failures: misses.map((miss) => `${path}: ${miss}`), page };
 };
 
 // Chrome on a shared runner sometimes exits before it has opened its
@@ -160,15 +178,38 @@ const launchChrome = async (attempts = 3) => {
 // DEMO_BASE says so, and the root otherwise.
 const server = await preview({ preview: { port: PORT, strictPort: true }, logLevel: 'error' });
 const failures = [];
+const paths = [server.config.base, `${server.config.base}about/`];
+// Each page as the gate judged it, for the run's summary.
+const judged = [];
 try {
     const chrome = await launchChrome();
     try {
-        failures.push(...(await gate(chrome, server.config.base)));
-        failures.push(...(await gate(chrome, `${server.config.base}about/`)));
+        for (const path of paths) {
+            const result = await gate(chrome, path);
+            failures.push(...result.failures);
+            judged.push(result.page);
+        }
     } finally {
         chrome.kill();
     }
 } finally {
+    // Written whatever happened, so the pages measured before a failure are still reported, and a
+    // page the audit never reached says so.
+    const reported = paths.map(
+        (path) =>
+            judged.find((page) => page.path === path) ?? {
+                path,
+                scores: {},
+                held: Object.keys(GATES),
+                sizes: {},
+                failures: ['stopped before it was measured'],
+            }
+    );
+    try {
+        writeSummary(lighthouseSummary(judged.length === 0 ? [] : reported, Object.keys(SIZES)));
+    } catch (error) {
+        console.warn(`The run's summary could not be written: ${String(error)}`);
+    }
     await server.close();
 }
 if (failures.length > 0) {

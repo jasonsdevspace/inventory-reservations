@@ -1,4 +1,5 @@
-# Weekly checks for newer versions of everything this repo depends on.
+# Weekly checks for newer versions of everything this repo depends on. A version waits a week
+# before it is offered, so one pulled soon after its release is never proposed.
 #
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
@@ -13,6 +14,8 @@ updates:
       directory: /
       schedule:
           interval: weekly
+      cooldown:
+          default-days: 7
       labels: ['dependencies']
       groups:
           # TypeScript and its lint plugin move together. typescript-eslint
@@ -33,10 +36,17 @@ updates:
             update-types: ['version-update:semver-major']
 
     # The browser demo has its own dependencies, pinned to exact versions.
+    # The other repos hold Lighthouse at 13.5, since 13.6 brought in a source-available license
+    # through its error reporting. The demo stays on 13.6: it runs Postgres in the page, and
+    # 13.5's simulation of a slow phone counts that work against its largest paint, at 3.6
+    # seconds where 13.6 measures 0.8, so 13.5 fails a page that loads well. Lighthouse is a
+    # tool the checks run and never ships with the demo, and the advisory resolves clean here.
     - package-ecosystem: npm
       directory: /demo
       schedule:
           interval: weekly
+      cooldown:
+          default-days: 7
       labels: ['dependencies']
       groups:
           demo:
@@ -53,6 +63,8 @@ updates:
       directory: /
       schedule:
           interval: weekly
+      cooldown:
+          default-days: 7
       labels: ['dependencies']
       groups:
           actions:
@@ -63,6 +75,8 @@ updates:
       directory: /
       schedule:
           interval: weekly
+      cooldown:
+          default-days: 7
       labels: ['dependencies']
       # A Node major moves the build stages and the distroless runtime
       # together, along with .nvmrc, the engines field and the Node types in
@@ -72,3 +86,12 @@ updates:
       ignore:
           - dependency-name: node
             update-types: ['version-update:semver-major']
+
+    # The database docker-compose.yml runs, pinned by digest, which CI's service image is held to.
+    - package-ecosystem: docker-compose
+      directory: /
+      schedule:
+          interval: weekly
+      cooldown:
+          default-days: 7
+      labels: ['dependencies']

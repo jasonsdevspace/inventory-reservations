@@ -197,7 +197,10 @@ phone with an axe audit on each visit, and audits it with Lighthouse: accessibil
 hundred and search ninety, and the page has to stay inside budgets for its paint, layout shift and
 the bytes it ships. The performance score is reported rather than gated, since Postgres starting in
 the page counts as blocking time. The build those checks ran against is the one the deploy publishes.
-Nothing here needs the Postgres container, since the demo starts its own in the page.
+Nothing here needs the Postgres container, since the demo starts its own in the page. The browser
+tests and the audit write what they found to the run's page on GitHub: the tests' totals and any
+that failed, and each page's figures against the gates. Every job runs on a named Ubuntu image
+within a time limit, which `scripts/workflows.test.ts` holds.
 
 1. Install the demo's dependencies, and Chromium for the browser tests the first time.
 
@@ -237,8 +240,9 @@ published is exactly what was scanned.
 Pushing a version tag such as `v0.5.0` releases that version. The release workflow checks the tag
 against `package.json` and [the changelog](CHANGELOG.md), and finds the image CI published for that
 commit, which exists only once every check on main has passed. It scans that image again against
-the day's vulnerability data, gives it the version as its tag, and creates a release on GitHub with
-the changelog entry as its notes and the image's own bill of materials attached.
+the day's vulnerability data, in a job that can only read packages, gives it the version as its tag,
+and creates a release on GitHub with the changelog entry as its notes and the image's own bill of
+materials attached. The run's page names the release, the image and its digest.
 
 Run the same scan locally with [Trivy](https://trivy.dev/) installed.
 

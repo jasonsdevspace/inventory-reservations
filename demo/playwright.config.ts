@@ -20,7 +20,14 @@ export default defineConfig({
     ...(process.env.CI ? { workers: 1 } : {}),
     forbidOnly: Boolean(process.env.CI),
     retries: process.env.CI ? 1 : 0,
-    reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+    // In CI, a JSON report too, which the run's summary is written from.
+    reporter: process.env.CI
+        ? [
+              ['list'],
+              ['html', { open: 'never' }],
+              ['json', { outputFile: 'playwright-results.json' }],
+          ]
+        : 'list',
     use: {
         baseURL: url,
         trace: 'retain-on-failure',

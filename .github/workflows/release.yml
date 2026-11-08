@@ -17,10 +17,19 @@ on:
 permissions:
     contents: read
 
+# One release run for a tag at a time, so a tag pushed again while its run is still going never
+# races it. A release run is never canceled partway.
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
 jobs:
-    # The cheap checks first, so a mistyped tag fails in seconds.
+    # The cheap checks first, so a mistyped tag fails in seconds, then the scan of the image to be
+    # released, in this job, which can only read packages.
     agree:
-        runs-on: ubuntu-latest
+        name: agree
+        runs-on: ubuntu-26.04
+        timeout-minutes: 20
         permissions:
             contents: read
             packages: read
@@ -103,9 +112,25 @@ jobs:
                   fi
                   echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
+            # The image to be released, by digest, under the same rules CI applies, with the
+            # findings accepted in .trivyignore.yaml. In this job, which can only read packages,
+            # so no third-party action runs where the repository can be written.
+            - name: Scan the image again
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                  scan-type: image
+                  image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+                  scanners: vuln
+                  severity: HIGH,CRITICAL
+                  ignore-unfixed: true
+                  exit-code: 1
+                  trivyignores: .trivyignore.yaml
+
     release:
+        name: release
         needs: agree
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-26.04
+        timeout-minutes: 15
         permissions:
             contents: write
             packages: write
@@ -125,28 +150,12 @@ jobs:
             - name: Name the image
               run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
 
+            # With the docker command itself, so this job, which can write to the repository and
+            # its packages, runs no action but GitHub's own.
             - name: Sign in to the registry
-              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-              with:
-                  registry: ghcr.io
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
-
-            # The image to be released, by digest, under the same rules CI
-            # applies, with the findings accepted in .trivyignore.yaml.
-            - name: Scan the image again
-              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-              with:
-                  scan-type: image
-                  image-ref: ${{ env.IMAGE }}@${{ env.DIGEST }}
-                  scanners: vuln
-                  severity: HIGH,CRITICAL
-                  ignore-unfixed: true
-                  exit-code: 1
-                  trivyignores: .trivyignore.yaml
-
-            - name: Set up Buildx
-              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+              env:
+                  TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
             - name: Name the scanned image with the version
               run: docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
@@ -168,10 +177,12 @@ jobs:
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
+                  release="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
                   if gh release view "$TAG" >/dev/null 2>&1; then
                       gh release upload "$TAG" "sbom.spdx.json#Bill of materials (SPDX)" --clobber
                       gh release edit "$TAG" --draft=false
                       echo "the release for $TAG exists, and is published with its bill of materials"
+                      printf '### On GitHub\n\n[inventory-reservations %s](%s) was already released, and is published with its bill of materials. The image is `%s:%s`, digest `%s`.\n' "$VERSION" "$release" "$IMAGE" "$VERSION" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
                       exit 0
                   fi
                   awk -v v="$VERSION" '
@@ -183,8 +194,9 @@ jobs:
                       echo "the changelog entry for $VERSION is empty"
                       exit 1
                   fi
-                  flags=""
-                  [ "$PRERELEASE" = "true" ] && flags="--prerelease"
+                  flags=()
+                  [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
                   gh release create "$TAG" --title "inventory-reservations $VERSION" \
-                      --notes-file notes.md $flags \
+                      --notes-file notes.md "${flags[@]}" \
                       "sbom.spdx.json#Bill of materials (SPDX)"
+                  printf '### Released\n\n[inventory-reservations %s](%s), with the changelog entry as its notes and the bill of materials attached. The image is `%s:%s`, digest `%s`.\n' "$VERSION" "$release" "$IMAGE" "$VERSION" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

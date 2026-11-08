@@ -10,3 +10,4 @@ lighthouse-report
 acceptances-*.json
 sbom.cdx.json
 sbom.spdx.json
+playwright-results.json
