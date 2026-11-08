@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
     verify:
-        runs-on: ubuntu-latest
+        name: verify
+        runs-on: ubuntu-26.04
+        timeout-minutes: 15
 
         # The integration tests talk to a real Postgres, because the behavior
         # under test belongs to the database: row locking, isolation levels and
@@ -28,7 +30,8 @@ jobs:
         # starts querying as soon as the job does.
         services:
             postgres:
-                image: postgres:18-alpine
+                # Pinned by digest, as the image's own base images are, and raised by hand.
+                image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
                 env:
                     POSTGRES_USER: reservations
                     POSTGRES_PASSWORD: reservations
@@ -51,7 +54,7 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Setup Node
+            - name: Set up Node
               uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
@@ -109,7 +112,9 @@ jobs:
     # It is built for the project site's path, so what is checked is the
     # page a visitor receives rather than a copy served from the root.
     demo:
-        runs-on: ubuntu-latest
+        name: demo
+        runs-on: ubuntu-26.04
+        timeout-minutes: 15
         env:
             DEMO_BASE: /inventory-reservations/
         defaults:
@@ -121,7 +126,7 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Setup Node
+            - name: Set up Node
               uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
               with:
                   node-version-file: .nvmrc
@@ -152,8 +157,19 @@ jobs:
                       start({}).then(() => start({ channel: 'chromium' }));
                   "
 
+            # The totals, and any test that failed, go to the run's summary from the JSON report.
+            # The summary reports the tests and never decides them, so the step ends with their
+            # status whether or not it could be written.
             - name: Browser tests
-              run: npm run e2e
+              run: |
+                  rm -f playwright-results.json
+                  status=0
+                  npm run e2e || status=$?
+                  if [ -f playwright-results.json ]; then
+                      node ../scripts/summary.mjs playwright playwright-results.json "Browser tests" "$status" ||
+                          echo "The summary of the browser tests could not be written."
+                  fi
+                  exit "$status"
 
             # Accessibility has to score a hundred, and the page has to stay
             # inside its budgets. Runs against the build the browser tests used.
@@ -197,7 +213,9 @@ jobs:
     # gets scanned. It carries no tag until the publish job below names it,
     # so what is published is the exact bytes that were scanned.
     image:
-        runs-on: ubuntu-latest
+        name: image
+        runs-on: ubuntu-26.04
+        timeout-minutes: 20
         permissions:
             contents: read
             packages: write
@@ -358,9 +376,11 @@ jobs:
     # and as the commit. Nothing is rebuilt here, the tags point at the
     # digest the image job pushed and scanned.
     publish:
+        name: publish
         needs: [verify, demo, image]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-26.04
+        timeout-minutes: 10
         permissions:
             packages: write
         steps:
@@ -371,9 +391,7 @@ jobs:
                   username: ${{ github.actor }}
                   password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Set up Buildx
-              uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
+            # A tag is a registry operation, which the runner's own builder does.
             - name: Tag the scanned image
               env:
                   IMAGE: ${{ needs.image.outputs.name }}
@@ -390,9 +408,11 @@ jobs:
     # including the tests against Postgres, the browser tests and the
     # Lighthouse audit, is never deployed.
     deploy:
+        name: deploy
         needs: [verify, demo]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-26.04
+        timeout-minutes: 10
         # A job's own permissions replace the workflow's, so the read the
         # checkout needs is named here beside the two Pages needs.
         permissions:
@@ -420,3 +440,10 @@ jobs:
             - name: Deploy to GitHub Pages
               id: deployment
               uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+            - name: Summarize the deploy
+              env:
+                  PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+              run: |
+                  commit="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+                  printf '### Deployed\n\n%s, from [`%s`](%s).\n' "$PAGE_URL" "${GITHUB_SHA:0:7}" "$commit" >> "$GITHUB_STEP_SUMMARY"

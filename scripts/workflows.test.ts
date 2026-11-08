@@ -40,6 +40,24 @@ const installsBrowser = ({ text }: Step) =>
 const hasOwnTimeLimit = ({ indent, text }: Step) =>
     new RegExp(`^${indent} {2}timeout-minutes: ['"]?[1-5]['"]?\\s*$`, 'm').test(text);
 
+/** A workflow's jobs, each by its id with the lines under it, read without comments. */
+const jobsOf = (text: string) => {
+    const lines = `${text}\n`
+        .replace(/\r\n/g, '\n')
+        .replace(/^[ \t]*#.*\n/gm, '')
+        .replace(/[ \t]+#[ \t].*$/gm, '');
+    const start = lines.search(/^jobs:/m);
+    if (start < 0) return [];
+    return lines
+        .slice(start)
+        .split(/^ {4}(?=[A-Za-z_][\w-]*:\s*$)/m)
+        .slice(1)
+        .map((block) => ({
+            id: block.slice(0, block.indexOf(':')),
+            body: `\n${block.slice(block.indexOf('\n') + 1)}`,
+        }));
+};
+
 describe('the workflows', () => {
     const steps = [...workflows.values()].flatMap(stepsOf);
 
@@ -53,6 +71,38 @@ describe('the workflows', () => {
         const installs = steps.filter(installsBrowser);
         expect(installs.length).toBeGreaterThan(0);
         expect(installs.filter((step) => !hasOwnTimeLimit(step))).toEqual([]);
+    });
+
+    it('run every job on a named image, with a name and a time limit of its own', () => {
+        const unready = [...workflows].flatMap(([path, text]) =>
+            jobsOf(text)
+                .filter(
+                    ({ body }) =>
+                        !/^ {8}name: \S/m.test(body) ||
+                        !/^ {8}timeout-minutes: \d+\s*$/m.test(body) ||
+                        !/^ {8}runs-on: ubuntu-26\.04\s*$/m.test(body)
+                )
+                .map(({ id }) => `${path} ${id}`)
+        );
+        expect([...workflows.keys()].length).toBeGreaterThan(0);
+        expect(unready).toEqual([]);
+    });
+
+    it('run no third-party action in a release job that can write to the repository or its packages', () => {
+        const release = workflows.get('.github/workflows/release.yml') ?? '';
+        expect(release).toContain('jobs:');
+        const writing = [['.github/workflows/release.yml', release] as const].flatMap(
+            ([path, text]) =>
+                jobsOf(text)
+                    .filter(({ body }) => /(?:contents|packages):\s*write/.test(body))
+                    .flatMap(({ id, body }) =>
+                        [...body.matchAll(/uses: ([\w.-]+)\//g)]
+                            .map((match) => match[1] ?? '')
+                            .filter((owner) => !['actions', 'docker'].includes(owner))
+                            .map((owner) => `${path} ${id} ${owner}`)
+                    )
+        );
+        expect(writing).toEqual([]);
     });
 
     it('read a step the way GitHub does, whatever the step looks like', () => {
