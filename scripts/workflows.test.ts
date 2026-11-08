@@ -107,6 +107,27 @@ describe('the workflows', () => {
         expect(writing).toEqual([]);
     });
 
+    it('run no third-party action in a CI job that can write, but the build actions a push needs', () => {
+        // Docker's own actions to set up the builder, sign in and build, which pushing the image
+        // takes. Any other action from outside GitHub runs where nothing can be written.
+        const allowed = new Set([
+            'docker/setup-buildx-action',
+            'docker/login-action',
+            'docker/build-push-action',
+        ]);
+        const ci = workflows.get('.github/workflows/ci.yml') ?? '';
+        const writing = jobsOf(ci)
+            .filter(({ body }) => /(?:contents|packages|pages|id-token):\s*write/.test(body))
+            .flatMap(({ id, body }) =>
+                [...body.matchAll(/uses: ([\w.-]+\/[\w.-]+)@/g)]
+                    .map((match) => match[1] ?? '')
+                    .filter((action) => !action.startsWith('actions/') && !allowed.has(action))
+                    .map((action) => `${id} ${action}`)
+            );
+        expect(jobsOf(ci).length).toBeGreaterThan(0);
+        expect(writing).toEqual([]);
+    });
+
     it('run the tests against the database image docker-compose.yml pins', () => {
         const pinned = /^\s*image: (postgres:\S+@sha256:[0-9a-f]{64})\s*$/m;
         const compose = pinned.exec(

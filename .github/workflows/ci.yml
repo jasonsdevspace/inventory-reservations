@@ -198,24 +198,28 @@ jobs:
 
     # The image the service ships as, built on every run from base images
     # pinned by digest. The image and the lockfiles are scanned after the
-    # build. A high or critical vulnerability with a fix available fails the
-    # job, and the only way past that is an entry in .trivyignore.yaml, scoped
+    # build, in a job of their own that can only read packages. A high or
+    # critical vulnerability with a fix available fails the scan, and the
+    # only way past that is an entry in .trivyignore.yaml, scoped
     # to one package, with a reason and an expiry. A check reads what each
     # entry suppressed before those scans gate, so a lapsed or unused entry is
     # named in words, and a weekly run in acceptances.yml catches one nearing
     # its date in a quiet week. Findings with no fix yet are listed in their
-    # own step and do not fail the job, since the fix is the next base image
+    # own step and do not fail the scan, since the fix is the next base image
     # or release, which Dependabot brings. A software bill of materials is
     # kept with every run.
     #
     # On main the build is pushed by digest, with its bill of materials and
-    # a build provenance attestation attached, and that pushed image is what
-    # gets scanned. It carries no tag until the publish job below names it,
-    # so what is published is the exact bytes that were scanned.
+    # a build provenance attestation attached, and the scan job reads that
+    # pushed image by its digest. It carries no tag until the publish job
+    # below names it, once the scan has passed, so what is published is the
+    # exact bytes that were scanned.
     image:
         name: image
         runs-on: ubuntu-26.04
         timeout-minutes: 20
+        # It can write packages, to push the image on main, so it runs no action but GitHub's own
+        # and Docker's build actions, and the scans run in the job below, which can only read.
         permissions:
             contents: read
             packages: write
@@ -234,31 +238,29 @@ jobs:
               id: name
               run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-            - name: Report what each acceptance suppressed in the lockfiles
-              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-              env:
-                  TRIVY_INCLUDE_DEV_DEPS: 'true'
-                  TRIVY_SHOW_SUPPRESSED: 'true'
-              with:
-                  scan-type: fs
-                  scan-ref: .
-                  scanners: vuln
-                  format: json
-                  output: acceptances-fs.json
-                  trivyignores: .trivyignore.yaml
-
             - name: Set up Buildx
               uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+            # On a pull request nothing is pushed, so the image is written to a file the scan job
+            # reads.
             - name: Build the image
               if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
               uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
               with:
                   context: .
-                  load: true
+                  outputs: type=docker,dest=${{ runner.temp }}/image.tar
                   tags: ${{ steps.name.outputs.image }}:ci
                   cache-from: type=gha
                   cache-to: type=gha,mode=max
+
+            - name: Keep the image for the scan
+              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: image
+                  path: ${{ runner.temp }}/image.tar
+                  if-no-files-found: error
+                  retention-days: 1
 
             - name: Sign in to the registry
               if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -280,16 +282,66 @@ jobs:
                   sbom: true
                   provenance: mode=max
 
+    # The scans, in a job that can only read packages, so no third-party action runs where the
+    # registry can be written. On main it reads the image the job above pushed, by digest, so what
+    # the publish job tags is what was scanned. On a pull request it reads the file the job above
+    # wrote.
+    scan:
+        name: scan
+        needs: image
+        runs-on: ubuntu-26.04
+        timeout-minutes: 20
+        permissions:
+            contents: read
+            packages: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Report what each acceptance suppressed in the lockfiles
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              env:
+                  TRIVY_INCLUDE_DEV_DEPS: 'true'
+                  TRIVY_SHOW_SUPPRESSED: 'true'
+              with:
+                  scan-type: fs
+                  scan-ref: .
+                  scanners: vuln
+                  format: json
+                  output: acceptances-fs.json
+                  trivyignores: .trivyignore.yaml
+
+            - name: Fetch the image the pull request built
+              if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
+              uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: image
+                  path: ${{ runner.temp }}
+
+            - name: Sign in to the registry
+              if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+              uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            # The pushed image by its digest, or the file a pull request's build wrote, which the
+            # scans below read as an image reference or as an input file.
             - name: Choose the image to scan
               id: built
               env:
-                  IMAGE: ${{ steps.name.outputs.image }}
-                  DIGEST: ${{ steps.push.outputs.digest }}
+                  IMAGE: ${{ needs.image.outputs.name }}
+                  DIGEST: ${{ needs.image.outputs.digest }}
               run: |
                   if [ -n "$DIGEST" ]; then
                       echo "ref=$IMAGE@$DIGEST" >> "$GITHUB_OUTPUT"
+                      echo "input=" >> "$GITHUB_OUTPUT"
                   else
-                      echo "ref=$IMAGE:ci" >> "$GITHUB_OUTPUT"
+                      echo "ref=" >> "$GITHUB_OUTPUT"
+                      echo "input=$RUNNER_TEMP/image.tar" >> "$GITHUB_OUTPUT"
                   fi
 
             # Reports with the suppressed findings shown, so the check below can
@@ -303,6 +355,7 @@ jobs:
               with:
                   scan-type: image
                   image-ref: ${{ steps.built.outputs.ref }}
+                  input: ${{ steps.built.outputs.input }}
                   scanners: vuln
                   format: json
                   output: acceptances-image.json
@@ -336,6 +389,7 @@ jobs:
               with:
                   scan-type: image
                   image-ref: ${{ steps.built.outputs.ref }}
+                  input: ${{ steps.built.outputs.input }}
                   scanners: vuln
                   severity: HIGH,CRITICAL
                   ignore-unfixed: true
@@ -350,6 +404,7 @@ jobs:
               with:
                   scan-type: image
                   image-ref: ${{ steps.built.outputs.ref }}
+                  input: ${{ steps.built.outputs.input }}
                   scanners: vuln
                   severity: HIGH,CRITICAL
                   exit-code: 0
@@ -361,6 +416,7 @@ jobs:
               with:
                   scan-type: image
                   image-ref: ${{ steps.built.outputs.ref }}
+                  input: ${{ steps.built.outputs.input }}
                   format: cyclonedx
                   output: sbom.cdx.json
                   skip-setup-trivy: true
@@ -377,7 +433,7 @@ jobs:
     # digest the image job pushed and scanned.
     publish:
         name: publish
-        needs: [verify, demo, image]
+        needs: [verify, demo, image, scan]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         runs-on: ubuntu-26.04
         timeout-minutes: 10

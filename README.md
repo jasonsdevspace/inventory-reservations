@@ -233,9 +233,10 @@ in its package. The acceptances there today cover Debian's OpenSSL in the runtim
 nothing loads, because Node carries its own.
 
 A bill of materials is kept with every run. On main the image is pushed with its bill of materials
-and a build provenance attestation attached, and that pushed image is the one scanned. Once every
-check has passed it is tagged at `ghcr.io/jasonsdevspace/inventory-reservations`, so what is
-published is exactly what was scanned.
+and a build provenance attestation attached, and that pushed image is the one scanned, in a job of
+its own that can only read packages, so the scanner never holds a token that can write to the
+registry. Once every check has passed it is tagged at `ghcr.io/jasonsdevspace/inventory-reservations`,
+so what is published is exactly what was scanned.
 
 Pushing a version tag such as `v0.5.0` releases that version. The release workflow checks the tag
 against `package.json` and [the changelog](CHANGELOG.md), and finds the image CI published for that
