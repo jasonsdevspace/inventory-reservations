@@ -37,7 +37,7 @@ reader. Dependabot proposes a new digest as a pull request, which CI builds and 
 other change, so a base image moves only by review.
 
 **A finding stops the build when someone can act on it.** A high or critical finding with a fix
-available fails the image job, in the image or in either lockfile, dev dependencies included since
+available fails the scan job, in the image or in either lockfile, dev dependencies included since
 they run on every laptop and in CI. A finding with no fix yet is listed in its own step and does
 not fail, because the fix is an upstream release, which Dependabot brings.
 
@@ -50,7 +50,15 @@ image, where a warning fails the run, so a week with no pushes still hears about
 
 **What ships is what was scanned.** On main the image is pushed once, by digest and untagged, with
 a bill of materials and build provenance attached, and that pushed image is the one scanned. A
-publish job tags that digest only after the tests, the demo and the scan have all passed. A release
+publish job tags that digest only after the tests, the demo and the scan have all passed.
+
+**The scans run where nothing can be written.** The image job holds the token that pushes, so it
+runs only GitHub's own actions and Docker's build actions. The scans run in a job of their own that
+can only read packages, which reads the pushed image by its digest on main, and on a pull request,
+where nothing is pushed, the image the build wrote to a file. Any step of any job can write the
+Actions cache, so the image that ships on main is built from its pinned base images with nothing
+read from that cache. A compromised scanner can read an image, and cannot change the one that
+ships, in the registry or through the cache. A release
 scans the same digest again against the day's vulnerability data, gives it the version as a further
 tag, and attaches the same bill of materials. Nothing is rebuilt along the way.
 
@@ -74,8 +82,11 @@ tag, and attaches the same bill of materials. Nothing is rebuilt along the way.
 
 ## How it is tested
 
-- The image job runs on every pull request, so the pinning, both scans and the acceptance check run
-  before any merge.
+- The image and scan jobs run on every pull request, so the pinning, both scans and the acceptance
+  check run before any merge.
+- `scripts/workflows.test.ts` fails on a third-party action in any CI job that can write, other
+  than Docker's actions to set up the builder, sign in and build, and on any action but GitHub's own
+  in a release job that can write.
 - The acceptance check has unit tests for each verdict: still matching, matching nothing, matching
   only another package, near its date, past it, an unreadable date and none.
 - The acceptance file was checked against a real scan in both directions: scoped to `libssl3` it
