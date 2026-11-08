@@ -10,6 +10,7 @@
  */
 import { appendFileSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { isRunDirectly } from './repository.mjs';
 
@@ -57,12 +58,21 @@ export const table = (head, rows) => {
  * }} LighthousePage
  */
 
+/** The name each kind of file is given in the table. */
+const KINDS = /** @type {Record<string, string>} */ ({
+    script: 'Script',
+    stylesheet: 'Style',
+    font: 'Font',
+});
+
 /**
- * Each page's figures, and what it missed.
+ * Each page's figures, and what it missed, with a column for each kind of file the gate holds to
+ * a budget and no other.
  *
  * @param {readonly LighthousePage[]} pages
+ * @param {readonly string[]} kinds
  */
-export const lighthouseSummary = (pages) => {
+export const lighthouseSummary = (pages, kinds) => {
     if (pages.length === 0) {
         return '### Lighthouse\n\nThe audit stopped before it measured a page.\n';
     }
@@ -78,7 +88,9 @@ export const lighthouseSummary = (pages) => {
         if (value === undefined) return 'Not measured';
         // Rounded down, as the gate compares it, so a score that just misses never shows the
         // figure it missed.
-        const shown = String(Math.floor(value * 100));
+        // To a tenth first, so a score such as 0.57, which is 56.99 in floating point, is not
+        // shown a point low.
+        const shown = String(Math.floor(Math.round(value * 1000) / 10));
         return page.held.includes(name) ? shown : `${shown}, not held`;
     };
     /** @param {number | undefined} size */
@@ -90,9 +102,7 @@ export const lighthouseSummary = (pages) => {
         score(page, 'seo'),
         page.paint === undefined ? 'Not measured' : `${String(Math.round(page.paint))} ms`,
         page.shift === undefined ? 'Not measured' : page.shift.toFixed(3),
-        size(page.sizes['script']),
-        size(page.sizes['stylesheet']),
-        size(page.sizes['font']),
+        ...kinds.map((kind) => size(page.sizes[kind])),
         page.failures.length === 0 ? 'Pass' : `Missed: ${page.failures.join(', ')}`,
     ]);
     return (
@@ -107,9 +117,7 @@ export const lighthouseSummary = (pages) => {
                 'SEO',
                 'Largest paint',
                 'Layout shift',
-                'Script',
-                'Style',
-                'Font',
+                ...kinds.map((kind) => KINDS[kind] ?? kind),
                 'Result',
             ],
             rows
@@ -183,7 +191,7 @@ export const playwrightSummary = (report, { title, runUrl, root = '', failed = f
     }
     lines.push(`${totals}.`);
     // A test that passed only on a retry is named too, so a test that is starting to fail shows
-    // before it fails, and fails the run where the run holds tests to their first try.
+    // before it fails.
     if (failing.length > 0) lines.push('', 'Failed:', '', ...failing);
     if (retried.length > 0) lines.push('', 'Passed only on a retry:', '', ...retried);
     if (failed) {
@@ -201,7 +209,9 @@ if (isRunDirectly(import.meta.url)) {
     if (kind === 'playwright' && first && second) {
         /** @type {PlaywrightReport} */
         const report = JSON.parse(readFileSync(first, 'utf8'));
-        const root = report.config?.rootDir ? relative(process.cwd(), report.config.rootDir) : '';
+        // Named from the repository, wherever the script was run from.
+        const repository = fileURLToPath(new URL('..', import.meta.url));
+        const root = report.config?.rootDir ? relative(repository, report.config.rootDir) : '';
         const failed = (status ?? '0') !== '0';
         writeSummary(playwrightSummary(report, { title: second, runUrl, root, failed }));
     } else {

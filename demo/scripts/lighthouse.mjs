@@ -205,7 +205,11 @@ try {
                 failures: ['stopped before it was measured'],
             }
     );
-    writeSummary(lighthouseSummary(judged.length === 0 ? [] : reported));
+    try {
+        writeSummary(lighthouseSummary(judged.length === 0 ? [] : reported, Object.keys(SIZES)));
+    } catch (error) {
+        console.warn(`The run's summary could not be written: ${String(error)}`);
+    }
     await server.close();
 }
 if (failures.length > 0) {

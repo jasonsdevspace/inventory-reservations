@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { repositoryFiles } from './repository.mjs';
@@ -12,6 +14,16 @@ const workflows = repositoryFiles(import.meta.url, (path) =>
     /^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)
 );
 
+/**
+ * A workflow's text without its comments or Windows line ends. A comment after a value is dropped
+ * as well as a line of one, so a step that mentions a flag in a comment is not taken for using it.
+ */
+const withoutComments = (text: string) =>
+    `${text}\n`
+        .replace(/\r\n/g, '\n')
+        .replace(/^[ \t]*#.*\n/gm, '')
+        .replace(/[ \t]+#[ \t].*$/gm, '');
+
 /** One step of a workflow: how far its dash is indented, and its lines. */
 interface Step {
     readonly indent: string;
@@ -24,13 +36,9 @@ interface Step {
  * is not taken for using it.
  */
 const stepsOf = (text: string): Step[] =>
-    [
-        ...`${text}\n`
-            .replace(/\r\n/g, '\n')
-            .replace(/^[ \t]*#.*\n/gm, '')
-            .replace(/[ \t]+#[ \t].*$/gm, '')
-            .matchAll(/^( *)- .*\n(?:\1 {2}.*\n|[ \t]*\n)*/gm),
-    ].map(([step = '', indent = '']) => ({ indent, text: step }));
+    [...withoutComments(text).matchAll(/^( *)- .*\n(?:\1 {2}.*\n|[ \t]*\n)*/gm)].map(
+        ([step = '', indent = '']) => ({ indent, text: step })
+    );
 
 /** Whether a step installs a browser, by the Playwright package or command it runs. */
 const installsBrowser = ({ text }: Step) =>
@@ -42,10 +50,7 @@ const hasOwnTimeLimit = ({ indent, text }: Step) =>
 
 /** A workflow's jobs, each by its id with the lines under it, read without comments. */
 const jobsOf = (text: string) => {
-    const lines = `${text}\n`
-        .replace(/\r\n/g, '\n')
-        .replace(/^[ \t]*#.*\n/gm, '')
-        .replace(/[ \t]+#[ \t].*$/gm, '');
+    const lines = withoutComments(text);
     const start = lines.search(/^jobs:/m);
     if (start < 0) return [];
     return lines
@@ -88,21 +93,28 @@ describe('the workflows', () => {
         expect(unready).toEqual([]);
     });
 
-    it('run no third-party action in a release job that can write to the repository or its packages', () => {
+    it("run no action but GitHub's own in a release job that can write to the repository or its packages", () => {
         const release = workflows.get('.github/workflows/release.yml') ?? '';
-        expect(release).toContain('jobs:');
-        const writing = [['.github/workflows/release.yml', release] as const].flatMap(
-            ([path, text]) =>
-                jobsOf(text)
-                    .filter(({ body }) => /(?:contents|packages):\s*write/.test(body))
-                    .flatMap(({ id, body }) =>
-                        [...body.matchAll(/uses: ([\w.-]+)\//g)]
-                            .map((match) => match[1] ?? '')
-                            .filter((owner) => !['actions', 'docker'].includes(owner))
-                            .map((owner) => `${path} ${id} ${owner}`)
-                    )
-        );
+        const writing = jobsOf(release)
+            .filter(({ body }) => /(?:contents|packages):\s*write/.test(body))
+            .flatMap(({ id, body }) =>
+                [...body.matchAll(/uses: ([\w.-]+)\//g)]
+                    .map((match) => match[1] ?? '')
+                    .filter((owner) => owner !== 'actions')
+                    .map((owner) => `${id} ${owner}`)
+            );
+        expect(jobsOf(release).length).toBeGreaterThan(0);
         expect(writing).toEqual([]);
+    });
+
+    it('run the tests against the database image docker-compose.yml pins', () => {
+        const pinned = /^\s*image: (postgres:\S+@sha256:[0-9a-f]{64})\s*$/m;
+        const compose = pinned.exec(
+            readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8')
+        )?.[1];
+        const ci = pinned.exec(workflows.get('.github/workflows/ci.yml') ?? '')?.[1];
+        expect(compose).toBeDefined();
+        expect(ci).toBe(compose);
     });
 
     it('read a step the way GitHub does, whatever the step looks like', () => {

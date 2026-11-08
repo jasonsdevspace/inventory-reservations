@@ -93,7 +93,8 @@ services:
                 condition: service_completed_successfully
 
     postgres:
-        image: postgres:18-alpine
+        # Pinned by digest, which Dependabot raises, and CI's service image is held to it.
+        image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         environment:
             POSTGRES_USER: reservations
             POSTGRES_PASSWORD: reservations

@@ -52,26 +52,29 @@ describe('a summary', () => {
 
 describe('the Lighthouse summary', () => {
     it('gives a row for each page with every figure it is held to, and what it missed', () => {
-        const text = lighthouseSummary([
-            {
-                path: '/',
-                scores: { performance: 1, accessibility: 1, 'best-practices': 1, seo: 1 },
-                held: ['performance', 'accessibility', 'seo'],
-                paint: 812,
-                shift: 0,
-                sizes: { script: 61.2, stylesheet: 9.4, font: 47.8 },
-                failures: [],
-            },
-            {
-                path: '/404.html',
-                scores: { performance: 0.88, accessibility: 1, 'best-practices': 1, seo: 0.66 },
-                held: ['performance', 'accessibility'],
-                paint: 2600,
-                shift: 0.01,
-                sizes: { script: 61.2, stylesheet: 9.4, font: 47.8 },
-                failures: ['performance below 90'],
-            },
-        ]);
+        const text = lighthouseSummary(
+            [
+                {
+                    path: '/',
+                    scores: { performance: 1, accessibility: 1, 'best-practices': 1, seo: 1 },
+                    held: ['performance', 'accessibility', 'seo'],
+                    paint: 812,
+                    shift: 0,
+                    sizes: { script: 61.2, stylesheet: 9.4, font: 47.8 },
+                    failures: [],
+                },
+                {
+                    path: '/404.html',
+                    scores: { performance: 0.88, accessibility: 1, 'best-practices': 1, seo: 0.66 },
+                    held: ['performance', 'accessibility'],
+                    paint: 2600,
+                    shift: 0.01,
+                    sizes: { script: 61.2, stylesheet: 9.4, font: 47.8 },
+                    failures: ['performance below 90'],
+                },
+            ],
+            ['script', 'stylesheet', 'font']
+        );
         expect(text).toContain('### Lighthouse');
         expect(text).toContain(
             '| Page | Performance | Accessibility | SEO | Largest paint | Layout shift | Script | Style | Font | Result |'
@@ -85,37 +88,66 @@ describe('the Lighthouse summary', () => {
     });
 
     it('rounds a score down, so one that just misses never shows the figure it missed', () => {
-        const text = lighthouseSummary([
-            {
-                path: '/',
-                scores: { performance: 0.896, accessibility: 1, seo: 1 },
-                held: ['performance', 'accessibility', 'seo'],
-                paint: 900,
-                shift: 0,
-                sizes: {},
-                failures: ['performance below 90'],
-            },
-        ]);
+        const text = lighthouseSummary(
+            [
+                {
+                    path: '/',
+                    scores: { performance: 0.896, accessibility: 1, seo: 1 },
+                    held: ['performance', 'accessibility', 'seo'],
+                    paint: 900,
+                    shift: 0,
+                    sizes: {},
+                    failures: ['performance below 90'],
+                },
+            ],
+            ['script', 'stylesheet', 'font']
+        );
         expect(text).toContain('| / | 89 | 100 | 100 |');
     });
 
     it('gives a page the audit never reached, with nothing measured', () => {
-        const text = lighthouseSummary([
-            {
-                path: '/career/',
-                scores: {},
-                held: ['performance'],
-                sizes: {},
-                failures: ['stopped before it was measured'],
-            },
-        ]);
+        const text = lighthouseSummary(
+            [
+                {
+                    path: '/career/',
+                    scores: {},
+                    held: ['performance'],
+                    sizes: {},
+                    failures: ['stopped before it was measured'],
+                },
+            ],
+            ['script', 'stylesheet', 'font']
+        );
         expect(text).toContain(
             '| /career/ | Not measured | Not measured | Not measured | Not measured | Not measured | None | None | None | Missed: stopped before it was measured |'
         );
     });
 
+    it('gives no column for a kind of file the gate holds no budget for', () => {
+        const text = lighthouseSummary(
+            [
+                {
+                    path: '/',
+                    scores: { performance: 0.57, accessibility: 1, seo: 1 },
+                    held: ['accessibility', 'seo'],
+                    paint: 900,
+                    shift: 0,
+                    sizes: { script: 220, stylesheet: 3 },
+                    failures: [],
+                },
+            ],
+            ['script', 'stylesheet']
+        );
+        expect(text).toContain('| Script | Style | Result |');
+        expect(text).not.toContain('Font');
+        // 0.57 is 56.99 in floating point, and is shown as 57.
+        expect(text).toContain(
+            '| / | 57, not held | 100 | 100 | 900 ms | 0.000 | 220 KB | 3 KB | Pass |'
+        );
+    });
+
     it('says it measured nothing, rather than giving an empty table', () => {
-        expect(lighthouseSummary([])).toBe(
+        expect(lighthouseSummary([], ['script', 'stylesheet'])).toBe(
             '### Lighthouse\n\nThe audit stopped before it measured a page.\n'
         );
     });
@@ -206,7 +238,7 @@ describe('a run that stops outside its tests', () => {
 });
 
 describe('a test that passed only on a retry', () => {
-    it('is named, with the report linked, since a run that holds tests to the first try fails on it', () => {
+    it('is named, with the report linked, so a test that is starting to fail shows before it fails', () => {
         const text = playwrightSummary(
             {
                 stats: { expected: 3, unexpected: 0, flaky: 1, skipped: 0 },

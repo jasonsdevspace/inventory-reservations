@@ -86,3 +86,12 @@ updates:
       ignore:
           - dependency-name: node
             update-types: ['version-update:semver-major']
+
+    # The database docker-compose.yml runs, pinned by digest, which CI's service image is held to.
+    - package-ecosystem: docker-compose
+      directory: /
+      schedule:
+          interval: weekly
+      cooldown:
+          default-days: 7
+      labels: ['dependencies']

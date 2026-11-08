@@ -30,7 +30,7 @@ jobs:
         # starts querying as soon as the job does.
         services:
             postgres:
-                # Pinned by digest, as the image's own base images are, and raised by hand.
+                # The same image docker-compose.yml pins, which Dependabot raises, held to it by a test.
                 image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
                 env:
                     POSTGRES_USER: reservations
