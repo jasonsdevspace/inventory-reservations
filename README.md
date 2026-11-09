@@ -134,6 +134,9 @@ Each record names the option it rejected and what the choice costs.
 
 ## Dev setup
 
+How to contribute is in [CONTRIBUTING.md](CONTRIBUTING.md), and the accessibility the demo is held
+to is in [ACCESSIBILITY.md](ACCESSIBILITY.md).
+
 ### Prerequisites
 
 | Tool                                                              | Needed for             | Check with               |
@@ -172,10 +175,12 @@ Docker Desktop includes Compose. On Linux, Docker Engine with the Compose plugin
 
 The tests use the Postgres container started above, so leave it running.
 
-1. Install the exact dependency versions recorded in `package-lock.json`.
+1. Install the exact dependency versions recorded in `package-lock.json`, and the demo's, since
+   the lint reads the demo's types too.
 
     ```bash
     npm ci
+    npm ci --prefix demo
     ```
 
 2. Run every check CI runs: type checking, linting, formatting, a prose check, a check that
