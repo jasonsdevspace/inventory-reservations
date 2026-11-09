@@ -3,8 +3,9 @@ import { readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /*
- * Every npm script the contributing guide runs is one the repository has, and every file, heading
- * and issue template the guide or the accessibility statement links to is there.
+ * Every npm script the contributing guide runs is one the repository has, every file, heading
+ * and issue template the guide or the accessibility statement links to is there, and the statement
+ * sends a reader who meets a barrier to the bug template.
  */
 
 const FILES = ['CONTRIBUTING.md', 'ACCESSIBILITY.md'];
@@ -17,6 +18,18 @@ const isFile = (path: string) => statSync(at(path), { throwIfNoEntry: false })?.
 
 /** Markdown with its fenced code blocks taken out, so an example is never read as a heading or link. */
 const prose = (markdown: string) => markdown.replaceAll(/^(```|~~~)[\s\S]*?^\1/gm, '');
+
+/** What a reader sees as prose, with inline code taken out too, so a link shown as code is not read. */
+const linkable = (markdown: string) => prose(markdown).replaceAll(/`(?:[^`\n]|\n(?!\n))*`/g, '');
+
+/** An anchor or a template name as GitHub reads it, with any percent-encoding undone. */
+const decoded = (text: string) => {
+    try {
+        return decodeURIComponent(text);
+    } catch {
+        return text;
+    }
+};
 
 /** A heading's id as GitHub writes it: lower case, punctuation dropped, each space a hyphen. */
 const slug = (heading: string) =>
@@ -42,6 +55,16 @@ const headingIds = (markdown: string) => {
 const LINK =
     /\]\((?![a-z][\w+.-]*:)([^)\s#]*)(?:#([^)\s]*))?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/gi;
 
+/** A link that opens a new issue here, with the template its `template` parameter names. */
+const TEMPLATE = new RegExp(
+    `github\\.com/${REPOSITORY}/issues/new\\?(?:[^)\\s#]*&)?template=([^&)\\s#]+)`,
+    'g'
+);
+
+/** The issue templates a file's links open, outside its code. */
+const templatesIn = (file: string) =>
+    [...linkable(read(file)).matchAll(TEMPLATE)].map(([, template = '']) => decoded(template));
+
 describe('the community files', () => {
     it('runs only npm scripts the repository has, however a line wraps them', () => {
         const scripts = Object.keys(
@@ -55,29 +78,29 @@ describe('the community files', () => {
     });
 
     it.each(FILES)('links only files that are there, and headings they hold, from %s', (file) => {
-        const missing = [...prose(read(file)).matchAll(LINK)].flatMap(([, path = '', heading]) => {
-            const target = path === '' ? file : path;
-            if (heading === undefined) return exists(target) ? [] : [target];
-            if (!isFile(target)) return [`${target}#${heading}`];
-            return headingIds(read(target)).includes(heading) ? [] : [`${target}#${heading}`];
-        });
+        const missing = [...linkable(read(file)).matchAll(LINK)].flatMap(
+            ([, link = '', anchor]) => {
+                // The path is left encoded, since `at` builds a URL and reading it decodes it once.
+                const heading = anchor === undefined ? undefined : decoded(anchor);
+                const target = link === '' ? file : link;
+                if (heading === undefined) return exists(target) ? [] : [target];
+                if (!isFile(target)) return [`${target}#${heading}`];
+                return headingIds(read(target)).includes(heading) ? [] : [`${target}#${heading}`];
+            }
+        );
         expect(missing).toEqual([]);
     });
 
-    it('opens only issue templates the repository has, and opens at least one', () => {
-        const templates = FILES.flatMap((file) =>
-            [
-                ...read(file).matchAll(
-                    new RegExp(
-                        `github\\.com/${REPOSITORY}/issues/new\\?[^)\\s]*?\\btemplate=([\\w.-]+)`,
-                        'gi'
-                    )
-                ),
-            ].map(([, template = '']) => template)
-        );
-        expect(templates.length).toBeGreaterThan(0);
+    it.each(FILES)('opens only issue templates the repository has, from %s', (file) => {
         expect(
-            templates.filter((template) => !isFile(`.github/ISSUE_TEMPLATE/${template}`))
+            templatesIn(file).filter(
+                (template) =>
+                    template === 'config.yml' || !isFile(`.github/ISSUE_TEMPLATE/${template}`)
+            )
         ).toEqual([]);
+    });
+
+    it('sends a reader who meets a barrier to the bug template, from the accessibility statement', () => {
+        expect(templatesIn('ACCESSIBILITY.md')).toContain('3-bug.md');
     });
 });
