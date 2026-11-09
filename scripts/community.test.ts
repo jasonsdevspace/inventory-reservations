@@ -3,8 +3,9 @@ import { readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /*
- * Every npm script the contributing guide runs is one the repository has, and every file, heading
- * and issue template the guide or the accessibility statement links to is there.
+ * Every npm script the contributing guide runs is one the repository has, every file, heading
+ * and issue template the guide or the accessibility statement links to is there, and the statement
+ * sends a reader who meets a barrier to the bug template.
  */
 
 const FILES = ['CONTRIBUTING.md', 'ACCESSIBILITY.md'];
@@ -19,9 +20,9 @@ const isFile = (path: string) => statSync(at(path), { throwIfNoEntry: false })?.
 const prose = (markdown: string) => markdown.replaceAll(/^(```|~~~)[\s\S]*?^\1/gm, '');
 
 /** What a reader sees as prose, with inline code taken out too, so a link shown as code is not read. */
-const linkable = (markdown: string) => prose(markdown).replaceAll(/`[^`\n]*`/g, '');
+const linkable = (markdown: string) => prose(markdown).replaceAll(/`(?:[^`\n]|\n(?!\n))*`/g, '');
 
-/** A path or anchor as GitHub reads it, with any percent-encoding undone. */
+/** An anchor or a template name as GitHub reads it, with any percent-encoding undone. */
 const decoded = (text: string) => {
     try {
         return decodeURIComponent(text);
@@ -54,16 +55,15 @@ const headingIds = (markdown: string) => {
 const LINK =
     /\]\((?![a-z][\w+.-]*:)([^)\s#]*)(?:#([^)\s]*))?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/gi;
 
+/** A link that opens a new issue here, with the template its `template` parameter names. */
+const TEMPLATE = new RegExp(
+    `github\\.com/${REPOSITORY}/issues/new\\?(?:[^)\\s#]*&)?template=([^&)\\s#]+)`,
+    'g'
+);
+
 /** The issue templates a file's links open, outside its code. */
 const templatesIn = (file: string) =>
-    [
-        ...linkable(read(file)).matchAll(
-            new RegExp(
-                `github\\.com/${REPOSITORY}/issues/new\\?[^)\\s]*?\\btemplate=([\\w.-]+)`,
-                'gi'
-            )
-        ),
-    ].map(([, template = '']) => template);
+    [...linkable(read(file)).matchAll(TEMPLATE)].map(([, template = '']) => decoded(template));
 
 describe('the community files', () => {
     it('runs only npm scripts the repository has, however a line wraps them', () => {
@@ -80,9 +80,9 @@ describe('the community files', () => {
     it.each(FILES)('links only files that are there, and headings they hold, from %s', (file) => {
         const missing = [...linkable(read(file)).matchAll(LINK)].flatMap(
             ([, link = '', anchor]) => {
-                const path = decoded(link);
+                // The path is left encoded, since `at` builds a URL and reading it decodes it once.
                 const heading = anchor === undefined ? undefined : decoded(anchor);
-                const target = path === '' ? file : path;
+                const target = link === '' ? file : link;
                 if (heading === undefined) return exists(target) ? [] : [target];
                 if (!isFile(target)) return [`${target}#${heading}`];
                 return headingIds(read(target)).includes(heading) ? [] : [`${target}#${heading}`];
@@ -95,7 +95,7 @@ describe('the community files', () => {
         expect(
             templatesIn(file).filter(
                 (template) =>
-                    !template.endsWith('.md') || !isFile(`.github/ISSUE_TEMPLATE/${template}`)
+                    template === 'config.yml' || !isFile(`.github/ISSUE_TEMPLATE/${template}`)
             )
         ).toEqual([]);
     });
