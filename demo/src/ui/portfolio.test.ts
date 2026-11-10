@@ -63,13 +63,27 @@ describe('whose demo this is', () => {
             'inventory-reservations is a portfolio project by Jason Poteet, who has more work on ' +
             'GitHub. How it works is explained in plain words. The source is on GitHub under the ' +
             'MIT license.';
-        for (const page of [html, aboutHtml]) {
+        // The explainer's link to itself is relative to itself, and every other link leads where
+        // the demo's does, in the same order.
+        const pages = [
+            { page: html, about: ABOUT_URL },
+            { page: aboutHtml, about: './' },
+        ];
+        for (const { page, about } of pages) {
             const footer = /<footer class="colophon">([\s\S]*?)<\/footer>/.exec(page)?.[1] ?? '';
             const words = footer
                 .replace(/<[^>]+>/g, '')
                 .replace(/\s+/g, ' ')
                 .trim();
             expect(words).toBe(sentence);
+            const hrefs = [...footer.matchAll(/<a\s+href="([^"]+)"/g)].map((m) => m[1]);
+            expect(hrefs).toEqual([
+                PORTFOLIO_URL,
+                GITHUB_PROFILE_URL,
+                about,
+                REPO_URL,
+                LICENSE_URL,
+            ]);
         }
     });
 });
