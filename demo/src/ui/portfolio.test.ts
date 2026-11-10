@@ -71,8 +71,10 @@ describe('whose demo this is', () => {
         ];
         for (const { page, about } of pages) {
             const footer = /<footer class="colophon">([\s\S]*?)<\/footer>/.exec(page)?.[1] ?? '';
+            // The words between the tags, read as the page draws them.
             const words = footer
-                .replace(/<[^>]+>/g, '')
+                .split(/<[^>]*>/)
+                .join('')
                 .replace(/\s+/g, ' ')
                 .trim();
             expect(words).toBe(sentence);
