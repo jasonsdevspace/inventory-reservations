@@ -51,11 +51,42 @@ describe('whose demo this is', () => {
         const hrefs = [...footer.matchAll(/<a href="([^"]+)">/g)].map((m) => m[1]);
         expect(hrefs).toEqual([
             PORTFOLIO_URL,
+            GITHUB_PROFILE_URL,
             ABOUT_URL,
             REPO_URL,
-            GITHUB_PROFILE_URL,
             LICENSE_URL,
         ]);
+    });
+
+    it('reads as whole sentences on both pages, with the license on the source alone', () => {
+        const sentence =
+            'inventory-reservations is a portfolio project by Jason Poteet, who has more work on ' +
+            'GitHub. How it works is explained in plain words. The source is on GitHub under the ' +
+            'MIT license.';
+        // The explainer's link to itself is relative to itself, and every other link leads where
+        // the demo's does, in the same order.
+        const pages = [
+            { page: html, about: ABOUT_URL },
+            { page: aboutHtml, about: './' },
+        ];
+        for (const { page, about } of pages) {
+            const footer = /<footer class="colophon">([\s\S]*?)<\/footer>/.exec(page)?.[1] ?? '';
+            // The words between the tags, read as the page draws them.
+            const words = footer
+                .split(/<[^>]*>/)
+                .join('')
+                .replace(/\s+/g, ' ')
+                .trim();
+            expect(words).toBe(sentence);
+            const hrefs = [...footer.matchAll(/<a\s+href="([^"]+)"/g)].map((m) => m[1]);
+            expect(hrefs).toEqual([
+                PORTFOLIO_URL,
+                GITHUB_PROFILE_URL,
+                about,
+                REPO_URL,
+                LICENSE_URL,
+            ]);
+        }
     });
 });
 

@@ -30,9 +30,11 @@ export const DemoFooter = () => (
     <footer className="colophon">
         <p>
             inventory-reservations is a portfolio project by{' '}
-            <a href={PORTFOLIO_URL}>Jason Poteet</a>. <a href={ABOUT_URL}>How it works</a>, in plain
-            words. The <a href={REPO_URL}>source</a> and <a href={GITHUB_PROFILE_URL}>more work</a>{' '}
-            are on GitHub, under the <a href={LICENSE_URL}>MIT license</a>.
+            <a href={PORTFOLIO_URL}>Jason Poteet</a>, who has{' '}
+            <a href={GITHUB_PROFILE_URL}>more work</a> on GitHub.{' '}
+            <a href={ABOUT_URL}>How it works</a> is explained in plain words. The{' '}
+            <a href={REPO_URL}>source</a> is on GitHub under the{' '}
+            <a href={LICENSE_URL}>MIT license</a>.
         </p>
     </footer>
 );
