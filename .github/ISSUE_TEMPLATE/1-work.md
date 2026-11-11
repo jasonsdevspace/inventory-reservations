@@ -6,6 +6,8 @@ labels: ''
 assignees: ''
 ---
 
+<!-- Set the Effort field to Low, Medium or High once the issue is created. -->
+
 ## Context
 
 <!-- What is wrong or missing today, who it affects and why it matters now. -->
@@ -30,7 +32,5 @@ out when nothing is drawn. -->
 <!-- What this does not cover, and where it is covered instead. -->
 
 ## Notes
-
-Size: <!-- S, M or L. -->
 
 <!-- Any step that has to be done by hand, named as manual. -->
