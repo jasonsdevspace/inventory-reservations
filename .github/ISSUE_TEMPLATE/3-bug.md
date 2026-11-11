@@ -6,7 +6,7 @@ labels: 'bug'
 assignees: ''
 ---
 
-<!-- Set the Effort field to Low, Medium or High once the issue is created. -->
+<!-- Set Effort in the sidebar to Low, Medium or High once the issue is created. -->
 
 ## What happens
 

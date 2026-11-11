@@ -6,7 +6,7 @@ labels: ''
 assignees: ''
 ---
 
-<!-- Set the Effort field to Low, Medium or High once the issue is created. -->
+<!-- Set Effort in the sidebar to Low, Medium or High once the issue is created. -->
 
 ## Context
 
@@ -33,4 +33,4 @@ out when nothing is drawn. -->
 
 ## Notes
 
-<!-- Any step that has to be done by hand, named as manual. -->
+<!-- Any step that has to be done by hand, named as manual. Leave this section out when there is nothing to say. -->
