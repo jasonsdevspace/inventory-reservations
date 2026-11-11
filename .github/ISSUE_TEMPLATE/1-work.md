@@ -6,6 +6,8 @@ labels: ''
 assignees: ''
 ---
 
+<!-- Set Effort in the sidebar to Low, Medium or High once the issue is created. -->
+
 ## Context
 
 <!-- What is wrong or missing today, who it affects and why it matters now. -->
@@ -31,6 +33,4 @@ out when nothing is drawn. -->
 
 ## Notes
 
-Size: <!-- S, M or L. -->
-
-<!-- Any step that has to be done by hand, named as manual. -->
+<!-- Any step that has to be done by hand, named as manual. Leave this section out when there is nothing to say. -->
