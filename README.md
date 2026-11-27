@@ -2,10 +2,11 @@
 
 **An inventory service that keeps two customers from buying the last unit of the same product.**
 
-It is a Node and TypeScript service over Postgres. Stock is kept as a history of every promise
-rather than a number that gets changed, so when the warehouse count disagrees there is something to
-compare it with. The demo runs this service's own store code against Postgres in the page, with the
-same schema, roles and row level security as a deployment, so there is nothing to install.
+It is a Node and TypeScript service over Postgres. What is promised to orders is kept as a history
+that is never changed, beside the count on hand, so when the warehouse count disagrees there is
+something to compare it with. The demo runs this service's own store code against Postgres in the
+page, with the same schema, roles and row level security as a deployment, so there is nothing to
+install.
 
 **[Open the demo](https://jasonsdevspace.com/inventory-reservations/)** ·
 [Read how it works](https://jasonsdevspace.com/inventory-reservations/about/) ·
@@ -38,8 +39,8 @@ a test that fails without the fix.
 The demo starts Postgres in your browser and says so while it does. Each link opens the demo at
 the right place.
 
-- **[Two buyers, one unit](https://jasonsdevspace.com/inventory-reservations/#race).** Press "Next
-  step" to the end with "No protection", then press "Row lock" and do it again.
+- **[Two buyers, one unit](https://jasonsdevspace.com/inventory-reservations/#race).** Press "No
+  protection", then "Next step" to the end, then press "Row lock" and do it again.
 - **[A second try with the same receipt](https://jasonsdevspace.com/inventory-reservations/#live).**
   Place an order, then press "Retry the last order".
 - **[The cart that walked away](https://jasonsdevspace.com/inventory-reservations/#live).** Press
@@ -79,14 +80,6 @@ so when the warehouse count disagrees there is nothing to compare it with.
   digest, scanned before it is published, and published with its bill of materials and build
   provenance.
 
-The benchmark ran on a laptop with 32 buyers on one product. Serializable transactions retry
-instead of waiting, and refuse an order once its retries run out.
-
-| Strategy     | Orders a second | Slowest 1% | Refused |
-| ------------ | --------------- | ---------- | ------- |
-| Row lock     | about 700       | 56 ms      | none    |
-| Serializable | about 320       | 584 ms     | some    |
-
 ## The gotchas, and the test behind each
 
 Each promise has a test that fails if the promise stops being true. The tests use a real Postgres
@@ -109,6 +102,17 @@ database: the container you start under Run the service, or a Postgres service i
   [`src/postgres/security/security.test.ts`](src/postgres/security/security.test.ts).
 - The reconciliation job reports a broken history and changes nothing. Tested in
   [`src/postgres/reconcile/reconcile.test.ts`](src/postgres/reconcile/reconcile.test.ts).
+
+## What was measured
+
+From the [contention benchmark](docs/benchmarks/results.md), run on a laptop with 32 buyers on one
+product, row locking accepts every order, while serializable transactions, which retry instead of
+waiting, refuse an order once its retries run out.
+
+| Strategy     | Orders a second | Slowest 1% | Refused   |
+| ------------ | --------------- | ---------- | --------- |
+| Row lock     | about 700       | 56 ms      | none      |
+| Serializable | about 320       | 584 ms     | 47 of 600 |
 
 ## Decisions
 
@@ -317,7 +321,8 @@ Docker Desktop includes Compose. On Linux, Docker Engine with the Compose plugin
     curl localhost:8080/ready
     ```
 
-    It answers `{ "status": "ready" }`. The API is now on port 8080.
+    It answers `{ "status": "ready" }`. The API is now on port 8080, and `docker compose down`
+    stops it, as under [Stop it](#stop-it).
 
 ### Run the tests
 
@@ -386,15 +391,14 @@ image it scanned.
 <details>
 <summary>What CI checks on the image</summary>
 
-CI builds the image the service ships as on every run, from base images pinned by digest, and scans
-it and both lockfiles. A high or critical vulnerability with a fix available fails the build.
-Findings with no fix yet are listed in their own step without failing it, since the fix is the next
-base image or release, and Dependabot opens that pull request. A finding that does not apply is
-accepted in `.trivyignore.yaml`, scoped to one package, with the reason and a date the acceptance
-expires, so it is looked at again rather than kept forever. A check in CI, and a weekly scheduled
-run, warn thirty days before an acceptance expires, and fail on one that no longer matches anything
-in its package. The acceptances there today cover Debian's OpenSSL in the runtime image, which
-nothing loads, because Node carries its own.
+Each run builds it from base images pinned by digest, and scans it and both lockfiles. A high or
+critical vulnerability with a fix available fails the build. Findings with no fix yet are listed in
+their own step without failing it, since the fix is the next base image or release, and Dependabot
+opens that pull request. A finding that does not apply is accepted in `.trivyignore.yaml`, scoped to
+one package, with the reason and a date the acceptance expires, so it is looked at again rather than
+kept forever. A check in CI, and a weekly scheduled run, warn thirty days before an acceptance
+expires, and fail on one that no longer matches anything in its package. The acceptances there today
+cover Debian's OpenSSL in the runtime image, which nothing loads, because Node carries its own.
 
 </details>
 
@@ -437,8 +441,8 @@ and Globex with 11 of its own `DEMO-1`.
 | `DEMO-PLENTIFUL` | 500     | 0                | 500       |
 | `DEMO-COMMITTED` | 10      | 3                | 7         |
 
-Run the steps in order, since each starts from the data the one before left. Responses are shown
-formatted below. Add `| jq` to a command if you have it installed.
+Run the steps in order on fresh demo data, since some start from what an earlier step left.
+Responses are shown formatted below. Add `| jq` to a command if you have it installed.
 
 <details>
 <summary>1. Check stock, where reserved units are not for sale</summary>
@@ -510,7 +514,7 @@ curl localhost:8080/inventory/DEMO-1 \
   --header 'x-api-key: demo-key-acme'
 ```
 
-It answers this.
+The second command answers this.
 
 ```json
 {
@@ -590,7 +594,7 @@ curl localhost:8080/inventory/DEMO-SCARCE \
   --header 'x-api-key: demo-key-acme'
 ```
 
-It answers this.
+The second command answers this.
 
 ```json
 {
@@ -725,8 +729,9 @@ Each module sits in its own folder with its tests and any files it reads.
 ## Configuration
 
 Everything is set through environment variables, and the defaults match the Compose setup, so local
-development needs none of them. The full list is in the operations guide, with
-[how to deploy the service](docs/operations.md).
+development needs none of them. The full list is in
+[the operations guide's configuration](docs/operations.md#configuration), beside how to deploy the
+service.
 
 ## Scheduled jobs
 
