@@ -4,7 +4,11 @@ name: Pull request message
 # squashed, and its body is what a reader of the pull request sees. Both are
 # written on GitHub where no hook runs, so they pass the same check a commit
 # message does, as written, headings included. The check is a workflow of its
-# own, so an edit to the title or body runs it again without running CI.
+# own, so an edit to the title or body runs it again without running CI. It runs
+# the prose check's command at the version the lockfile pins, fetched alone with
+# its install scripts off, after checking the registry's hash for that version
+# against the lockfile's, which costs a few seconds where installing every
+# dependency would cost about a minute.
 # Dependabot's body quotes release notes written elsewhere, so only its title
 # is held to the house rules.
 on:
@@ -46,4 +50,9 @@ jobs:
                   else
                       printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/message"
                   fi
-                  node scripts/check-commit-message.mjs --as-is "$RUNNER_TEMP/message"
+                  read -r version integrity < <(node -p "const p = require('./package-lock.json').packages['node_modules/@jasonsdevspace/prose-check']; p.version + ' ' + p.integrity")
+                  if [ "$(npm view "@jasonsdevspace/prose-check@$version" dist.integrity)" != "$integrity" ]; then
+                      echo "the registry's hash for the prose check $version does not match the lockfile's"
+                      exit 1
+                  fi
+                  npm exec --yes --ignore-scripts --package="@jasonsdevspace/prose-check@$version" -- check-commit-message --as-is "$RUNNER_TEMP/message"

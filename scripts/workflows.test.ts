@@ -316,6 +316,19 @@ const dockerfiles = repositoryFiles(import.meta.url, isDockerfile);
 describe('the workflows', () => {
     const steps = [...workflows.values()].flatMap(stepsOf);
 
+    it("run the commit message check at the lockfile's version, its hash checked and its scripts off", () => {
+        const message = workflows.get('.github/workflows/message.yml') ?? '';
+        const lockRead = message.indexOf("require('./package-lock.json')");
+        const hashCheck = message.indexOf('dist.integrity)" != "$integrity"');
+        const run = message.indexOf(
+            'npm exec --yes --ignore-scripts --package="@jasonsdevspace/prose-check@$version" -- check-commit-message --as-is'
+        );
+        expect(lockRead).toBeGreaterThan(-1);
+        expect(hashCheck).toBeGreaterThan(lockRead);
+        expect(run).toBeGreaterThan(hashCheck);
+        expect(message).toMatch(/does not match the lockfile's"\n\s+exit 1/);
+    });
+
     it('name each CI job for what it does, in plain words rather than its id', () => {
         const unnamed = jobsOf(workflows.get('.github/workflows/ci.yml') ?? '')
             .map(({ id, body }) => ({ id, name: /^ {8}name: *(.+?) *$/m.exec(body)?.[1] ?? '' }))

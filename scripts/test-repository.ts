@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +49,15 @@ export const runCheckIn = (
         write(tracked);
         execFileSync('git', ['add', '--all'], options);
         write(untracked);
+        // The prose check's package, which a check may import as the repository installs it, linked
+        // into the throwaway repository and kept out of what git lists there.
+        mkdirSync(join(root, 'node_modules', '@jasonsdevspace'), { recursive: true });
+        symlinkSync(
+            join(HERE, '..', 'node_modules', '@jasonsdevspace', 'prose-check'),
+            join(root, 'node_modules', '@jasonsdevspace', 'prose-check'),
+            'dir'
+        );
+        writeFileSync(join(root, '.git', 'info', 'exclude'), 'node_modules/\n');
         mkdirSync(join(root, 'scripts'), { recursive: true });
         for (const copied of [script, 'repository.mjs']) {
             copyFileSync(join(HERE, copied), join(root, 'scripts', copied));

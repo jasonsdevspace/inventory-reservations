@@ -19,7 +19,9 @@
  */
 import { basename } from 'node:path';
 
-import { isDockerfile, isRunDirectly, repositoryFiles } from './repository.mjs';
+import { isDockerfile } from '@jasonsdevspace/prose-check';
+
+import { isRunDirectly, repositoryFiles } from './repository.mjs';
 
 /**
  * The parts of a package.json this reads, each `unknown` until looked at.
