@@ -59,5 +59,5 @@ audit among them.
 ## Security and accessibility
 
 Report a security issue privately, as the [security policy](SECURITY.md) says, not in a public
-issue. Report a barrier to using the demo as the [accessibility statement](../docs/ACCESSIBILITY.md)
-says.
+issue. Report a barrier to using the demo as the
+[accessibility statement](../docs/ACCESSIBILITY.md) says.

@@ -5,13 +5,14 @@ import { describe, expect, it } from 'vitest';
 
 /*
  * Every npm script the contributing guide runs is one the repository has, every file, heading
- * and issue template the guide or the accessibility statement links to is there, and the statement
- * sends a reader who meets a barrier to the bug template.
+ * and issue template the README, the guide, the security policy or the accessibility statement
+ * links to is there, read from the folder each sits in as GitHub reads a relative link, and the
+ * statement sends a reader who meets a barrier to the bug template.
  */
 
 const CONTRIBUTING = '.github/CONTRIBUTING.md';
 const ACCESSIBILITY = 'docs/ACCESSIBILITY.md';
-const FILES = [CONTRIBUTING, ACCESSIBILITY];
+const FILES = [CONTRIBUTING, '.github/SECURITY.md', ACCESSIBILITY, 'README.md'];
 const REPOSITORY = 'jasonsdevspace/inventory-reservations';
 
 const at = (path: string) => new URL(`../${path}`, import.meta.url);
@@ -86,7 +87,17 @@ describe('the community files', () => {
                 // The path is left encoded, since `at` builds a URL and reading it decodes it once.
                 const heading = anchor === undefined ? undefined : decoded(anchor);
                 // A link is read from the folder of the file it is in, as GitHub reads it.
-                const target = link === '' ? file : posix.join(posix.dirname(file), link);
+                // GitHub reads a link from the file's own folder, or from the root when it opens
+                // with a slash, and serves nothing above the root.
+                const target =
+                    link === ''
+                        ? file
+                        : posix.normalize(
+                              link.startsWith('/')
+                                  ? link.slice(1)
+                                  : posix.join(posix.dirname(file), link)
+                          );
+                if (target === '..' || target.startsWith('../')) return [link];
                 if (heading === undefined) return exists(target) ? [] : [target];
                 if (!isFile(target)) return [`${target}#${heading}`];
                 return headingIds(read(target)).includes(heading) ? [] : [`${target}#${heading}`];
