@@ -20,6 +20,9 @@ updates:
           interval: monthly
       cooldown:
           default-days: 14
+          # The house's own package skips the wait meant for releases from other authors, since
+          # its versions are reviewed before they are promoted.
+          exclude: ['@jasonsdevspace/prose-check']
       labels: ['dependencies']
       groups:
           # The prose check moves in a pull request of its own, since a new rule can fail this
