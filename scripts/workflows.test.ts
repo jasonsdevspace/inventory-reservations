@@ -92,6 +92,15 @@ const outsideActionsWhereWritable = (text: string, allowed: ReadonlySet<string>)
 describe('the workflows', () => {
     const steps = [...workflows.values()].flatMap(stepsOf);
 
+    it('name each CI job for what it does, in plain words rather than its id', () => {
+        const unnamed = jobsOf(workflows.get('.github/workflows/ci.yml') ?? '')
+            .map(({ id, body }) => ({ id, name: /^ {8}name: *(.+?) *$/m.exec(body)?.[1] ?? '' }))
+            .filter(({ id, name }) => name === '' || name === id || !/\s/.test(name))
+            .map(({ id }) => id);
+        expect(jobsOf(workflows.get('.github/workflows/ci.yml') ?? '').length).toBeGreaterThan(0);
+        expect(unnamed).toEqual([]);
+    });
+
     it('install a browser without the system packages the runner already has', () => {
         // The packages come from Ubuntu's mirror, which has been slow enough to run a job out
         // of time before its tests began.
