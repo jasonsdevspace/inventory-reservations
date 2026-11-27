@@ -1,1 +1,1 @@
-node scripts/check-commit-message.mjs "$1"
+npx --no-install check-commit-message "$1"

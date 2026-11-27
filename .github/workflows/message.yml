@@ -4,7 +4,12 @@ name: Pull request message
 # squashed, and its body is what a reader of the pull request sees. Both are
 # written on GitHub where no hook runs, so they pass the same check a commit
 # message does, as written, headings included. The check is a workflow of its
-# own, so an edit to the title or body runs it again without running CI.
+# own, so an edit to the title or body runs it again without running CI. It runs
+# the prose check's command from the tarball the lockfile names: the address,
+# version and hash all come from the lockfile, the tarball is checked against that
+# hash before it is unpacked, the file that runs is the one checked, and no install
+# runs, which costs a few seconds where installing every dependency would cost
+# about a minute.
 # Dependabot's body quotes release notes written elsewhere, so only its title
 # is held to the house rules.
 on:
@@ -46,4 +51,16 @@ jobs:
                   else
                       printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/message"
                   fi
-                  node scripts/check-commit-message.mjs --as-is "$RUNNER_TEMP/message"
+                  read -r resolved integrity < <(node -p "const p = require('./package-lock.json').packages['node_modules/@jasonsdevspace/prose-check']; p.resolved + ' ' + p.integrity")
+                  case "$resolved" in
+                      https://registry.npmjs.org/@jasonsdevspace/prose-check/-/prose-check-*.tgz) ;;
+                      *) echo "the lockfile resolves the prose check outside the npm registry"; exit 1 ;;
+                  esac
+                  curl --fail --silent --show-error --proto '=https' --max-time 60 --output "$RUNNER_TEMP/prose-check.tgz" "$resolved"
+                  if [ "sha512-$(openssl dgst -sha512 -binary "$RUNNER_TEMP/prose-check.tgz" | base64 -w0)" != "$integrity" ]; then
+                      echo "the prose check's tarball does not match the lockfile's hash"
+                      exit 1
+                  fi
+                  mkdir "$RUNNER_TEMP/prose-check"
+                  tar -xzf "$RUNNER_TEMP/prose-check.tgz" -C "$RUNNER_TEMP/prose-check"
+                  node "$RUNNER_TEMP/prose-check/package/bin/check-commit-message.mjs" --as-is "$RUNNER_TEMP/message"
