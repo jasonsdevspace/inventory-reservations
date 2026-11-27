@@ -6,8 +6,8 @@ conduct](https://github.com/jasonsdevspace/.github/blob/main/CODE_OF_CONDUCT.md)
 
 ## Setting up and running the checks
 
-[Dev setup](README.md#dev-setup) in the README says what to install and how to run the service. The
-tests run against a real Postgres, so start the Compose database first and leave it running. The
+[Dev setup](../README.md#dev-setup) in the README says what to install and how to run the service.
+The tests run against a real Postgres, so start the Compose database first and leave it running. The
 lint reads the demo's types, so install the demo's dependencies too. These commands do that and run
 every check CI's verify job runs:
 
@@ -23,11 +23,11 @@ names the Node version in `.nvmrc`, then runs the tests against a test database 
 creates beside the one the service serves from.
 
 A change to the demo in `demo/` also has to pass the demo's checks, which
-[Check the demo](README.md#check-the-demo) lists with their commands. CI builds the demo as it is
+[Check the demo](../README.md#check-the-demo) lists with their commands. CI builds the demo as it is
 published and runs its tests against Postgres running in the page. It visits the demo in Chromium
 on a desktop and a phone, with an axe audit on each visit, and audits both its pages with
 Lighthouse, where accessibility has to score a hundred. CI also builds and scans the image the
-service ships as, as [Check the image](README.md#check-the-image) describes.
+service ships as, as [Check the image](../README.md#check-the-image) describes.
 
 ## Writing
 
@@ -59,4 +59,5 @@ audit among them.
 ## Security and accessibility
 
 Report a security issue privately, as the [security policy](SECURITY.md) says, not in a public
-issue. Report a barrier to using the demo as the [accessibility statement](ACCESSIBILITY.md) says.
+issue. Report a barrier to using the demo as the [accessibility statement](../docs/ACCESSIBILITY.md)
+says.

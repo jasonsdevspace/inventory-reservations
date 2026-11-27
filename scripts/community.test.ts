@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
+import { posix } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -8,7 +9,9 @@ import { describe, expect, it } from 'vitest';
  * sends a reader who meets a barrier to the bug template.
  */
 
-const FILES = ['CONTRIBUTING.md', 'ACCESSIBILITY.md'];
+const CONTRIBUTING = '.github/CONTRIBUTING.md';
+const ACCESSIBILITY = 'docs/ACCESSIBILITY.md';
+const FILES = [CONTRIBUTING, ACCESSIBILITY];
 const REPOSITORY = 'jasonsdevspace/inventory-reservations';
 
 const at = (path: string) => new URL(`../${path}`, import.meta.url);
@@ -70,7 +73,7 @@ describe('the community files', () => {
         const scripts = Object.keys(
             (JSON.parse(read('package.json')) as { scripts: Record<string, string> }).scripts
         );
-        const named = [...read('CONTRIBUTING.md').matchAll(/npm\s+run\s+([\w:-]+)/g)].map(
+        const named = [...read(CONTRIBUTING).matchAll(/npm\s+run\s+([\w:-]+)/g)].map(
             ([, script]) => script ?? ''
         );
         expect(named.length).toBeGreaterThan(0);
@@ -82,7 +85,8 @@ describe('the community files', () => {
             ([, link = '', anchor]) => {
                 // The path is left encoded, since `at` builds a URL and reading it decodes it once.
                 const heading = anchor === undefined ? undefined : decoded(anchor);
-                const target = link === '' ? file : link;
+                // A link is read from the folder of the file it is in, as GitHub reads it.
+                const target = link === '' ? file : posix.join(posix.dirname(file), link);
                 if (heading === undefined) return exists(target) ? [] : [target];
                 if (!isFile(target)) return [`${target}#${heading}`];
                 return headingIds(read(target)).includes(heading) ? [] : [`${target}#${heading}`];
@@ -101,6 +105,6 @@ describe('the community files', () => {
     });
 
     it('sends a reader who meets a barrier to the bug template, from the accessibility statement', () => {
-        expect(templatesIn('ACCESSIBILITY.md')).toContain('3-bug.md');
+        expect(templatesIn(ACCESSIBILITY)).toContain('3-bug.md');
     });
 });

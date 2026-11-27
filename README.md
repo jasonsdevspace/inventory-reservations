@@ -134,8 +134,8 @@ Each record names the option it rejected and what the choice costs.
 
 ## Dev setup
 
-How to contribute is in [CONTRIBUTING.md](CONTRIBUTING.md), and the accessibility the demo is held
-to is in [ACCESSIBILITY.md](ACCESSIBILITY.md).
+How to contribute is in [CONTRIBUTING.md](.github/CONTRIBUTING.md), and the accessibility the demo
+is held to is in [ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
 
 ### Prerequisites
 
