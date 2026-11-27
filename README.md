@@ -723,6 +723,8 @@ Each module sits in its own folder with its tests and any files it reads.
     - `seed/` holds the demo data.
     - `security/` holds the tests for tenant isolation and database rights.
     - `testkit/` holds the shared test helpers.
+- `scripts/` holds the Node check, the check of the image scan's accepted findings, the run
+  summaries and the tests that read the whole repository.
 
 </details>
 
