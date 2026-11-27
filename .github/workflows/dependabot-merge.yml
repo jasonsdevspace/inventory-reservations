@@ -1,0 +1,108 @@
+name: Dependabot merge
+
+# A Dependabot pull request that moves a development dependency by a patch or a
+# minor, or a runtime dependency by a patch, merges by itself once its required
+# checks pass. Every other update waits for a person. Which updates qualify, and
+# why, is in scripts/dependabot-merge.mjs.
+#
+# The decision runs with a token that can only read. The merge runs in a job of
+# its own with a token from the records app, and runs nothing but gh, so no code
+# from the pull request runs beside the key. A merge made with the workflow's
+# own token would start no workflow on main, so CI would not run after it. A
+# run Dependabot starts reads only what is stored for Dependabot, not what
+# Actions keeps, so the app's client id and key are stored there too.
+on:
+    pull_request:
+        types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+    group: dependabot-merge-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    decide:
+        name: Decide whether it merges by itself
+        # Opened by Dependabot and pushed by it, so a person's push to its branch
+        # never turns auto-merge on.
+        if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+        runs-on: ubuntu-26.04
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            pull-requests: read
+        outputs:
+            merge: ${{ steps.decide.outputs.merge }}
+        steps:
+            - name: Read Dependabot's metadata
+              id: metadata
+              uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+            # The decision as main has it, not as the pull request does.
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.event.pull_request.base.sha }}
+                  persist-credentials: false
+
+            # The Node the repository names in .nvmrc, not the runner's own.
+            - name: Set up Node
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+
+            - name: Decide
+              id: decide
+              env:
+                  UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+              run: node scripts/dependabot-merge.mjs >> "$GITHUB_OUTPUT"
+
+    merge:
+        name: Turn auto-merge on or off
+        needs: decide
+        runs-on: ubuntu-26.04
+        timeout-minutes: 5
+        permissions: {}
+        steps:
+            - name: Say whether the records app is set up
+              id: app
+              env:
+                  READY: ${{ secrets.RECORDS_APP_CLIENT_ID != '' && secrets.RECORDS_APP_PRIVATE_KEY != '' }}
+              run: |
+                  echo "ready=$READY" >> "$GITHUB_OUTPUT"
+                  if [ "$READY" != "true" ]; then
+                      echo "Auto-merge was left as it was, since the records app's Dependabot secrets are not set." >> "$GITHUB_STEP_SUMMARY"
+                  fi
+
+            - name: Get the records app's token
+              if: steps.app.outputs.ready == 'true'
+              id: token
+              uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+              with:
+                  client-id: ${{ secrets.RECORDS_APP_CLIENT_ID }}
+                  private-key: ${{ secrets.RECORDS_APP_PRIVATE_KEY }}
+                  permission-contents: write
+                  permission-pull-requests: write
+
+            # A squash, so the pull request's title is the commit on main.
+            - name: Turn auto-merge on
+              if: steps.app.outputs.ready == 'true' && needs.decide.outputs.merge == 'true'
+              env:
+                  GH_TOKEN: ${{ steps.token.outputs.token }}
+                  GH_REPO: ${{ github.repository }}
+                  NUMBER: ${{ github.event.pull_request.number }}
+              run: gh pr merge "$NUMBER" --auto --squash
+
+            # Off again when a later push, such as a group taking in a runtime minor,
+            # leaves the pull request to a person.
+            - name: Turn auto-merge off
+              if: steps.app.outputs.ready == 'true' && needs.decide.outputs.merge != 'true'
+              env:
+                  GH_TOKEN: ${{ steps.token.outputs.token }}
+                  GH_REPO: ${{ github.repository }}
+                  NUMBER: ${{ github.event.pull_request.number }}
+              run: |
+                  if [ "$(gh pr view "$NUMBER" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+                      gh pr merge "$NUMBER" --disable-auto
+                  fi

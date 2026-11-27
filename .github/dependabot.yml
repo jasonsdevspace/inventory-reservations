@@ -8,6 +8,8 @@
 # Security fixes arrive separately, as soon as an advisory is published.
 # Each update carries the dependencies label alone, so pull requests sort by
 # the kind of work rather than by the package manager.
+# The low-risk updates merge by themselves once CI passes, as
+# workflows/dependabot-merge.yml says.
 version: 2
 updates:
     - package-ecosystem: npm

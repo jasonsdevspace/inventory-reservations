@@ -56,6 +56,14 @@ no notes to the reviewer, and ends with "Closes #N", or "Part of #N" when the is
 otherwise. Every check in CI passes before a pull request is merged, the browser tests and the Lighthouse
 audit among them.
 
+A Dependabot pull request merges by itself once its checks pass when every update in it moves a
+development dependency by a patch or a minor, or a runtime dependency by a patch, and it comes from
+one of the groups in `.github/dependabot.yml`. A runtime minor, a major, an action or image update
+or a security update waits for a person, since it can change what a visitor gets or what the build
+does. `scripts/dependabot-merge.mjs` holds the rule. The merge uses a token from the records app,
+whose client id and key are set as Dependabot secrets, since a run Dependabot starts cannot read the
+Actions secrets.
+
 ## Security and accessibility
 
 Report a security issue privately, as the [security policy](SECURITY.md) says, not in a public
