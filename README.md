@@ -11,10 +11,10 @@ same schema, roles and row level security as a deployment, so there is nothing t
 [Read how it works](https://jasonsdevspace.com/inventory-reservations/about/) ·
 [Read the benchmark](docs/benchmarks/results.md)
 
-<a href="https://jasonsdevspace.com/inventory-reservations/"><picture>
+<p><a href="https://jasonsdevspace.com/inventory-reservations/"><picture>
 <source media="(prefers-color-scheme: dark)" srcset=".github/readme/race-dark.png">
 <img src=".github/readme/race-light.png" alt="The inventory-reservations demo, where a row lock sells the last unit to one buyer and refuses the other" width="720">
-</picture></a>
+</picture></a></p>
 
 ## Why I built it
 
