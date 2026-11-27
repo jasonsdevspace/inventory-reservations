@@ -61,6 +61,7 @@
         ]
     },
     "allowScripts": {
+        "unrs-resolver": true,
         "fsevents": true
     }
 }

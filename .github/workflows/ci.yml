@@ -150,7 +150,7 @@ jobs:
             - name: Install Chromium
               timeout-minutes: 3
               run: |
-                  npx playwright install chromium
+                  npx --no-install playwright install chromium
                   node -e "
                       const { chromium } = require('@playwright/test');
                       const start = (options) => chromium.launch({ timeout: 30_000, ...options }).then((b) => b.close());
