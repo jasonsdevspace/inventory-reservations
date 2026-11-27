@@ -62,7 +62,8 @@ export default tseslint.config(
                 { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
             ],
             // Every callable is a value, so a file reads top to bottom with no
-            // hoisting surprises. Matches the convention in the portfolio repo.
+            // hoisting surprises, and a function is never used before the line
+            // that defines it.
             'func-style': ['error', 'expression'],
             'prefer-arrow-callback': ['error', { allowNamedFunctions: false }],
             'simple-import-sort/imports': 'error',
