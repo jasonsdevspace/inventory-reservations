@@ -19,7 +19,7 @@
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "prose": "node scripts/check-prose.mjs",
+        "prose": "check-prose",
         "node-check": "node scripts/check-node.mjs",
         "test": "vitest",
         "test:run": "vitest run",
@@ -30,6 +30,7 @@
     "license": "MIT",
     "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@jasonsdevspace/prose-check": "0.1.0",
         "@types/node": "^24.19.2",
         "@types/pg": "^8.23.1",
         "@vitest/coverage-v8": "^5.1.0",
