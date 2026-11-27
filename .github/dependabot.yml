@@ -4,7 +4,8 @@
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
 # are grouped into one pull request per ecosystem to keep the noise down, with
-# TypeScript and its lint plugin in a group of their own.
+# TypeScript and its lint plugin in a group of their own, and the prose check
+# in one of its own, since it moves in a pull request of its own.
 # Security fixes arrive separately, as soon as an advisory is published.
 # Each update carries the dependencies label alone, so pull requests sort by
 # the kind of work rather than by the package manager.
