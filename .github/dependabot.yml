@@ -18,6 +18,10 @@ updates:
           default-days: 7
       labels: ['dependencies']
       groups:
+          # The prose check moves in a pull request of its own, since a new rule can fail this
+          # repository's own text and should not hold back the other updates.
+          prose-check:
+              patterns: ['@jasonsdevspace/prose-check']
           # TypeScript and its lint plugin move together. typescript-eslint
           # names the TypeScript versions it supports down to the minor, so
           # Dependabot only offers a TypeScript minor once the plugin accepts it.
