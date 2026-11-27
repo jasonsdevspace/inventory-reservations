@@ -1,5 +1,7 @@
-# Weekly checks for newer versions of everything this repo depends on. A version waits a week
+# Monthly checks for newer versions of everything this repo depends on. A version waits two weeks
 # before it is offered, so one pulled soon after its release is never proposed.
+# Once a month, so a month of updates arrives as one pull request per group and is reviewed in
+# one sitting, since in a weekly batch each later pull request needed a branch update to merge.
 #
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
@@ -13,9 +15,9 @@ updates:
     - package-ecosystem: npm
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       cooldown:
-          default-days: 7
+          default-days: 14
       labels: ['dependencies']
       groups:
           # TypeScript and its lint plugin move together. typescript-eslint
@@ -44,9 +46,9 @@ updates:
     - package-ecosystem: npm
       directory: /demo
       schedule:
-          interval: weekly
+          interval: monthly
       cooldown:
-          default-days: 7
+          default-days: 14
       labels: ['dependencies']
       groups:
           demo:
@@ -62,9 +64,9 @@ updates:
     - package-ecosystem: github-actions
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       cooldown:
-          default-days: 7
+          default-days: 14
       labels: ['dependencies']
       groups:
           actions:
@@ -74,9 +76,9 @@ updates:
     - package-ecosystem: docker
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       cooldown:
-          default-days: 7
+          default-days: 14
       labels: ['dependencies']
       # A Node major moves the build stages and the distroless runtime
       # together, along with .nvmrc, the engines field and the Node types in
@@ -91,7 +93,7 @@ updates:
     - package-ecosystem: docker-compose
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       cooldown:
-          default-days: 7
+          default-days: 14
       labels: ['dependencies']
