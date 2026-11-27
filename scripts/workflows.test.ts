@@ -316,6 +316,15 @@ const dockerfiles = repositoryFiles(import.meta.url, isDockerfile);
 describe('the workflows', () => {
     const steps = [...workflows.values()].flatMap(stepsOf);
 
+    it('name each CI job for what it does, in plain words rather than its id', () => {
+        const unnamed = jobsOf(workflows.get('.github/workflows/ci.yml') ?? '')
+            .map(({ id, body }) => ({ id, name: /^ {8}name: *(.+?) *$/m.exec(body)?.[1] ?? '' }))
+            .filter(({ id, name }) => name === '' || name === id || !/\s/.test(name))
+            .map(({ id }) => id);
+        expect(jobsOf(workflows.get('.github/workflows/ci.yml') ?? '').length).toBeGreaterThan(0);
+        expect(unnamed).toEqual([]);
+    });
+
     it('install dependencies without running their install scripts', () => {
         const found = [
             ...steps.flatMap(({ text }) => commandsIn(runOf(text))),

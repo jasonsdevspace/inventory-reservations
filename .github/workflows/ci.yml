@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
     verify:
-        name: verify
+        name: Lint, test and build
         runs-on: ubuntu-26.04
         timeout-minutes: 15
 
@@ -112,7 +112,7 @@ jobs:
     # It is built for the project site's path, so what is checked is the
     # page a visitor receives rather than a copy served from the root.
     demo:
-        name: demo
+        name: Browser tests
         runs-on: ubuntu-26.04
         timeout-minutes: 15
         env:
@@ -215,7 +215,7 @@ jobs:
     # below names it, once the scan has passed, so what is published is the
     # exact bytes that were scanned.
     image:
-        name: image
+        name: Build the image
         runs-on: ubuntu-26.04
         timeout-minutes: 20
         # It can write packages, to push the image on main, so it runs no action but GitHub's own
@@ -301,7 +301,7 @@ jobs:
     # the publish job tags is what was scanned. On a pull request it reads the file the job above
     # wrote.
     scan:
-        name: scan
+        name: Scan the dependencies and the image
         needs: image
         runs-on: ubuntu-26.04
         timeout-minutes: 20
@@ -447,7 +447,7 @@ jobs:
     # and as the commit. Nothing is rebuilt here, the tags point at the
     # digest the image job pushed and scanned.
     publish:
-        name: publish
+        name: Publish the scanned image
         needs: [verify, demo, image, scan]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         runs-on: ubuntu-26.04
@@ -479,7 +479,7 @@ jobs:
     # including the tests against Postgres, the browser tests and the
     # Lighthouse audit, is never deployed.
     deploy:
-        name: deploy
+        name: Deploy the demo
         needs: [verify, demo]
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         runs-on: ubuntu-26.04
