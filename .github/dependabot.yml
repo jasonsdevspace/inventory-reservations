@@ -1,7 +1,8 @@
-# Monthly checks for newer versions of everything this repo depends on. A version waits two weeks
-# before it is offered, so one pulled soon after its release is never proposed.
-# Once a month, so a month of updates arrives as one pull request per group and is reviewed in
-# one sitting, since in a weekly batch each later pull request needed a branch update to merge.
+# Monthly checks for newer versions of everything this repo depends on, so minor and patch
+# updates arrive once a month, one pull request per group, and are reviewed in one sitting.
+# A major still comes in a pull request of its own.
+# A version is offered on the first monthly run at least two weeks after its release, so one
+# pulled soon after its release is never proposed. The base images are the exception, below.
 #
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
@@ -72,13 +73,15 @@ updates:
           actions:
               patterns: ['*']
 
-    # The base images in the Dockerfile, including the distroless runtime.
+    # The base images in the Dockerfile, including the distroless runtime. Base images get no
+    # security updates of their own, so a patched image arrives only on this schedule, which stays
+    # weekly with a week's wait.
     - package-ecosystem: docker
       directory: /
       schedule:
-          interval: monthly
+          interval: weekly
       cooldown:
-          default-days: 14
+          default-days: 7
       labels: ['dependencies']
       # A Node major moves the build stages and the distroless runtime
       # together, along with .nvmrc, the engines field and the Node types in
@@ -90,10 +93,11 @@ updates:
             update-types: ['version-update:semver-major']
 
     # The database docker-compose.yml runs, pinned by digest, which CI's service image is held to.
+    # Weekly with a week's wait, as the base images above, since it gets no security updates either.
     - package-ecosystem: docker-compose
       directory: /
       schedule:
-          interval: monthly
+          interval: weekly
       cooldown:
-          default-days: 14
+          default-days: 7
       labels: ['dependencies']
