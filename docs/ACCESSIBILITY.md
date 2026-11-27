@@ -66,4 +66,4 @@ issue with the
 Say what you were trying to do and on which page, and under "Where" the browser and any assistive
 technology you use. The acceptance criteria and the size are for whoever fixes it, and can be left
 empty. A maintainer adds the accessibility label, and it is handled as a bug. A barrier that is
-also a security issue goes to the [security policy](SECURITY.md) instead.
+also a security issue goes to the [security policy](../.github/SECURITY.md) instead.
