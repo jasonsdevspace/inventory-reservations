@@ -761,9 +761,8 @@ Each job's command and environment are in the operations guide, under
 ## Background
 
 The model follows the multi-source inventory design a widely used commerce platform documents
-publicly. Physical
-stock is kept apart from reservations, shipments and cancellations add compensating entries, and
-available stock is derived rather than stored.
+publicly. Physical stock is kept apart from reservations, shipments and cancellations add
+compensating entries, and available stock is derived rather than stored.
 
 ## License
 
