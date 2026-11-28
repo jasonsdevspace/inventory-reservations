@@ -7,8 +7,8 @@
 # The workflow actions are pinned to commit hashes, which never move on their
 # own, so without this they would quietly fall behind. Minor and patch updates
 # are grouped into one pull request per ecosystem to keep the noise down, with
-# TypeScript and its lint plugin in a group of their own, and each of the house's own
-# packages in one of its own.
+# TypeScript, its lint plugin and the shared config in a group of their own, and each of the
+# house's checks in one of its own.
 # Security fixes arrive separately, as soon as an advisory is published.
 # Each update carries the dependencies label alone, so pull requests sort by
 # the kind of work rather than by the package manager.
@@ -36,15 +36,16 @@ updates:
           # this repository's settings and should not hold back the other updates.
           repo-check:
               patterns: ['@jasonsdevspace/repo-check']
-          # The shared lint, format and TypeScript settings move in a pull request of their own,
-          # since a raised rule can fail this repository's code and should not hold back the rest.
-          config:
-              patterns: ['@jasonsdevspace/config']
-          # TypeScript and its lint plugin move together. typescript-eslint
-          # names the TypeScript versions it supports down to the minor, so
-          # Dependabot only offers a TypeScript minor once the plugin accepts it.
+          # TypeScript, its lint plugin and the shared config move together. typescript-eslint
+          # names the TypeScript versions it supports down to the minor, so Dependabot only offers
+          # a TypeScript minor once the plugin accepts it, and a config release that raises a peer's
+          # floor arrives with the update it needs.
           typescript:
-              patterns: ['typescript', 'typescript-eslint', '@typescript-eslint/*']
+              patterns:
+                  - 'typescript'
+                  - 'typescript-eslint'
+                  - '@typescript-eslint/*'
+                  - '@jasonsdevspace/config'
               update-types: [minor, patch]
           npm:
               update-types: [minor, patch]
