@@ -52,7 +52,12 @@ jobs:
                   else
                       printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/message"
                   fi
-                  read -r version resolved integrity < <(node -p "const p = require('./package-lock.json').packages['node_modules/@jasonsdevspace/prose-check']; [p.version, p.resolved, p.integrity].join(' ')")
+                  values=$(node -p "const p = require('./package-lock.json').packages['node_modules/@jasonsdevspace/prose-check']; [p.version, p.resolved, p.integrity].join('\n')")
+                  { read -r version; read -r resolved; read -r integrity; } <<< "$values"
+                  if [ -z "$version" ] || [ "$version" = undefined ]; then
+                      echo "the lockfile names no version of the prose check"
+                      exit 1
+                  fi
                   if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
                       [ "$resolved" != "https://registry.npmjs.org/@jasonsdevspace/prose-check/-/prose-check-$version.tgz" ]; then
                       echo "the lockfile resolves the prose check outside the npm registry"
