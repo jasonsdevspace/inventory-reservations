@@ -5,8 +5,7 @@
     "description": "An append-only inventory reservation ledger, and the concurrency control it does not give you for free.",
     "type": "module",
     "engines": {
-        "node": ">=24 <25",
-        "npm": ">=11.14.0"
+        "node": ">=24 <25"
     },
     "scripts": {
         "type-check": "tsc --noEmit && tsc -p scripts",
