@@ -47,11 +47,6 @@ updates:
             update-types: ['version-update:semver-major']
 
     # The browser demo has its own dependencies, pinned to exact versions.
-    # The other repos hold Lighthouse at 13.5, since 13.6 brought in a source-available license
-    # through its error reporting. The demo stays on 13.6: it runs Postgres in the page, and
-    # 13.5's simulation of a slow phone counts that work against its largest paint, at 3.6
-    # seconds where 13.6 measures 0.8, so 13.5 fails a page that loads well. Lighthouse is a
-    # tool the checks run and never ships with the demo, and the advisory resolves clean here.
     - package-ecosystem: npm
       directory: /demo
       schedule:

@@ -53,8 +53,8 @@ requests are squashed, so the title becomes the commit on main, and the title an
 pass the commit message check. The body says what changed and why, with no counts, no checklist and
 no notes to the reviewer, and ends with "Closes #N", or "Part of #N" when the issue has more to do.
 "Closes" is repeated before each issue a pull request finishes, since GitHub reads only the first
-otherwise. Every check in CI passes before a pull request is merged, the browser tests and the Lighthouse
-audit among them.
+otherwise. Every check in CI passes before a pull request is merged, the browser tests and the
+Lighthouse audit among them.
 
 ## Security and accessibility
 
