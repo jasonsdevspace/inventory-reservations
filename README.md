@@ -329,15 +329,18 @@ Docker Desktop includes Compose. On Linux, Docker Engine with the Compose plugin
 The tests use the Postgres container started above, so leave it running.
 
 1. Install the exact dependency versions recorded in `package-lock.json`, and the demo's, since
-   the lint reads the demo's types too.
+   the lint reads the demo's types too. Then set up the commit hooks by name, since the `.npmrc`
+   turns npm's install scripts off and npm skips `prepare` with them.
 
     ```bash
     npm ci
     npm ci --prefix demo
+    npm run prepare
     ```
 
 2. Run every check CI runs: type checking, linting, formatting, a prose check, a check that
-   everything names the Node version in `.nvmrc`, and the tests.
+   everything names the Node version in `.nvmrc`, a check that npm runs no install scripts, and the
+   tests.
 
     ```bash
     npm run verify

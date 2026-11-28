@@ -1,6 +1,6 @@
 /**
- * What the repository checks share: the files they read, whether a check was
- * run directly and what counts as a Dockerfile.
+ * What the repository checks share: the files they read and whether a check
+ * was run directly.
  *
  * A check reads the repository its own file sits in, from the top, wherever
  * it is started. It reads tracked files and new ones not yet added, and skips
@@ -8,16 +8,8 @@
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-/**
- * A Dockerfile by its usual names: `Dockerfile` alone, with a suffix as in
- * `Dockerfile.prod`, or as the extension in `api.Dockerfile`.
- *
- * @param {string} path
- */
-export const isDockerfile = (path) => /^Dockerfile(\..+)?$|\.Dockerfile$/.test(basename(path));
 
 /**
  * The repository's files a check reads, by path from its top, with their text.

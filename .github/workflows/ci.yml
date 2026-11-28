@@ -93,6 +93,11 @@ jobs:
             - name: Node version check
               run: npm run node-check
 
+            # The repository's .npmrc files keep npm from running install scripts or fetching a
+            # package from git or an address, for every install however it is written.
+            - name: Install check
+              run: npm run installs
+
             - name: Test
               run: npm run test:run
 
