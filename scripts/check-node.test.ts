@@ -1,8 +1,78 @@
 // @vitest-environment node
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { nodeMismatches } from './check-node.mjs';
-import { runCheckIn } from './test-repository.js';
+
+/** The folder the Node check is in. */
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The test's environment with every `GIT_` variable dropped and git's global and system config
+ * shut off, so the Node check run in a repository of its own is not pointed at the real one by a
+ * hook's variables or changed by the user's settings.
+ */
+const isolated = (): NodeJS.ProcessEnv => ({
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+});
+
+/** What the Node check printed and how it ended. */
+interface Ran {
+    readonly status: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+}
+
+/**
+ * Runs the Node check from the `scripts` folder of a throwaway repository, with the tracked files
+ * added to git's index and the untracked ones left for git to find. The check and `repository.mjs`
+ * are copied into that folder, since the check reads the repository its own file sits in, and so
+ * they are also untracked files there that it reads like any other.
+ */
+const runIn = (tracked: Record<string, string>, untracked: Record<string, string> = {}): Ran => {
+    const root = mkdtempSync(join(tmpdir(), 'repository-check-'));
+    const options = { cwd: root, env: isolated(), timeout: 10_000 };
+    const write = (files: Record<string, string>): void => {
+        for (const [path, text] of Object.entries(files)) {
+            mkdirSync(dirname(join(root, path)), { recursive: true });
+            writeFileSync(join(root, path), text);
+        }
+    };
+    try {
+        execFileSync('git', ['init', '--quiet'], options);
+        write(tracked);
+        execFileSync('git', ['add', '--all'], options);
+        write(untracked);
+        // The prose check's package, which the Node check imports as the repository installs it,
+        // linked into the throwaway repository and kept out of what git lists there.
+        mkdirSync(join(root, 'node_modules', '@jasonsdevspace'), { recursive: true });
+        symlinkSync(
+            join(HERE, '..', 'node_modules', '@jasonsdevspace', 'prose-check'),
+            join(root, 'node_modules', '@jasonsdevspace', 'prose-check'),
+            'dir'
+        );
+        writeFileSync(join(root, '.git', 'info', 'exclude'), 'node_modules/\n');
+        mkdirSync(join(root, 'scripts'), { recursive: true });
+        for (const copied of ['check-node.mjs', 'repository.mjs']) {
+            copyFileSync(join(HERE, copied), join(root, 'scripts', copied));
+        }
+        const result = spawnSync(process.execPath, ['check-node.mjs'], {
+            ...options,
+            cwd: join(root, 'scripts'),
+            encoding: 'utf8',
+        });
+        return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+};
 
 const ROOT = JSON.stringify({
     private: true,
@@ -197,9 +267,6 @@ describe('the Node version check', () => {
         ).toHaveLength(1);
     });
 });
-
-const runIn = (tracked: Record<string, string>, untracked: Record<string, string> = {}) =>
-    runCheckIn('check-node.mjs', tracked, untracked);
 
 describe('the Node version check, run as a command', () => {
     const clean = { '.nvmrc': '24\n', 'package.json': ROOT };
