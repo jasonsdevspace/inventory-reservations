@@ -593,7 +593,7 @@ const indentOf = (line: string): number => line.length - line.trimStart().length
 const keyIndentOf = (line: string): number => indentOf(line) + (/^\s*- /.test(line) ? 2 : 0);
 
 /** The lines after `start` that sit deeper than `base`, blank lines among them. */
-const blockAfter = (lines: readonly string[], start: number, base: number): string[] => {
+const linesUnder = (lines: readonly string[], start: number, base: number): string[] => {
     const body: string[] = [];
     for (const line of lines.slice(start + 1)) {
         if (line.trim() !== '' && indentOf(line) <= base) break;
@@ -623,7 +623,7 @@ const runBlockWith = (text: string, needle: string): string => {
         lines.findIndex((line) => line.includes(needle))
     );
     if (start < 0) return '';
-    const block = blockAfter(lines, start, keyIndentOf(lines[start] ?? ''));
+    const block = linesUnder(lines, start, keyIndentOf(lines[start] ?? ''));
     const indent = Math.min(...block.filter((line) => line.trim() !== '').map(indentOf));
     return block.map((line) => line.slice(indent)).join('\n');
 };
@@ -640,7 +640,7 @@ const runsIn = (text: string): string[] => {
         const value = /^\s*(?:- )?(?:run|script):\s*(.*)$/.exec(line)?.[1];
         if (value === undefined) return [];
         const first = /^[|>][-+0-9]*\s*$/.test(value) ? '' : value;
-        return [[first, ...blockAfter(lines, at, keyIndentOf(line))].join('\n').trim()];
+        return [[first, ...linesUnder(lines, at, keyIndentOf(line))].join('\n').trim()];
     });
 };
 
