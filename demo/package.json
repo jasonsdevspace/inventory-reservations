@@ -35,8 +35,5 @@
     },
     "overrides": {
         "glob": "14.0.3"
-    },
-    "allowScripts": {
-        "fsevents": true
     }
 }

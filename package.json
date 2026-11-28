@@ -21,16 +21,18 @@
         "format:check": "prettier --check .",
         "prose": "check-prose",
         "node-check": "node scripts/check-node.mjs",
+        "installs": "check-installs",
         "test": "vitest",
         "test:run": "vitest run",
         "test:coverage": "vitest run --coverage",
-        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run node-check && npm run test:run",
+        "verify": "npm run type-check && npm run lint && npm run format:check && npm run prose && npm run node-check && npm run installs && npm run test:run",
         "prepare": "husky || true"
     },
     "license": "MIT",
     "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@jasonsdevspace/prose-check": "0.3.0",
+        "@jasonsdevspace/repo-check": "0.1.0",
         "@types/node": "^24.19.2",
         "@types/pg": "^8.23.1",
         "@vitest/coverage-v8": "^5.1.0",
@@ -59,9 +61,5 @@
         "*.{json,md,yml,yaml,css,html}": [
             "prettier --write"
         ]
-    },
-    "allowScripts": {
-        "unrs-resolver": true,
-        "fsevents": true
     }
 }

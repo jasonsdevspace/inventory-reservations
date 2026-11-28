@@ -20,15 +20,19 @@ updates:
           interval: monthly
       cooldown:
           default-days: 14
-          # The house's own package skips the wait meant for releases from other authors, since
-          # its versions are reviewed before they are promoted.
-          exclude: ['@jasonsdevspace/prose-check']
+          # The house's own packages skip the wait meant for releases from other authors, since
+          # their versions are reviewed before they are promoted.
+          exclude: ['@jasonsdevspace/prose-check', '@jasonsdevspace/repo-check']
       labels: ['dependencies']
       groups:
           # The prose check moves in a pull request of its own, since a new rule can fail this
           # repository's own text and should not hold back the other updates.
           prose-check:
               patterns: ['@jasonsdevspace/prose-check']
+          # The repo check moves in a pull request of its own, since a rule that asks more can fail
+          # this repository's settings and should not hold back the other updates.
+          repo-check:
+              patterns: ['@jasonsdevspace/repo-check']
           # TypeScript and its lint plugin move together. typescript-eslint
           # names the TypeScript versions it supports down to the minor, so
           # Dependabot only offers a TypeScript minor once the plugin accepts it.

@@ -17,6 +17,9 @@
 # before anyone merges it.
 FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS build
 WORKDIR /app
+# npm runs no install script in the image, whatever installs it, since only the package files are
+# copied before installing and the repository's .npmrc is not among them.
+ENV npm_config_ignore_scripts=true
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY tsconfig.json tsconfig.build.json ./
@@ -27,6 +30,7 @@ RUN npm run build
 # reaches the final image.
 FROM node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS dependencies
 WORKDIR /app
+ENV npm_config_ignore_scripts=true
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
