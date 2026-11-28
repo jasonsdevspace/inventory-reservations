@@ -21,7 +21,11 @@ npm run verify
 
 `npm run verify` type-checks, lints, and checks formatting and prose. It checks that everything
 names the Node version in `.nvmrc`, then runs the tests against a test database the container
-creates beside the one the service serves from.
+creates beside the one the service serves from. The lint, format and TypeScript settings come from
+[`@jasonsdevspace/config`](https://www.npmjs.com/package/@jasonsdevspace/config), which every
+project repository takes, and `eslint.config.js` adds only the rules that name this repository's
+folders. The demo keeps its own TypeScript settings, since its checks install only its own
+dependencies.
 
 A change to the demo in `demo/` also has to pass the demo's checks, which
 [Check the demo](../README.md#check-the-demo) lists with their commands. CI builds the demo as it is

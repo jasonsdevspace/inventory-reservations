@@ -15,8 +15,8 @@ import { createServer, parseRateLimit } from './server/server.js';
  * Configuration comes from the environment and nowhere else, so the same image
  * runs locally and in production with no rebuild.
  */
-const strategy = parseStrategy(process.env.CONCURRENCY_STRATEGY);
-const port = Number(process.env.PORT ?? 8080);
+const strategy = parseStrategy(process.env['CONCURRENCY_STRATEGY']);
+const port = Number(process.env['PORT'] ?? 8080);
 
 const pool = createAppPool();
 
@@ -26,8 +26,8 @@ await assertBoundByRowLevelSecurity(pool);
 const app = await createServer({
     pool,
     strategy,
-    policy: parsePolicy(process.env.OVERSELL_POLICY),
-    rateLimitPerMinute: parseRateLimit(process.env.RATE_LIMIT_PER_MINUTE),
+    policy: parsePolicy(process.env['OVERSELL_POLICY']),
+    rateLimitPerMinute: parseRateLimit(process.env['RATE_LIMIT_PER_MINUTE']),
 });
 
 // Containers are stopped with a signal, and a connection pool that is not

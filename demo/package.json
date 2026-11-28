@@ -8,7 +8,7 @@
         "dev": "vite",
         "build": "npm run type-check && vite build",
         "preview": "vite preview",
-        "type-check": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+        "type-check": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json",
         "test": "vitest run",
         "e2e": "playwright test",
         "lighthouse": "node scripts/lighthouse.mjs"

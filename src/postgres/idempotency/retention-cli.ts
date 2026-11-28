@@ -12,7 +12,7 @@ import { purgeExpiredKeys } from './idempotency.js';
  * Keys are useful for as long as a client might still retry. Keeping them
  * beyond that turns a correctness mechanism into a table that only grows.
  */
-const window = process.env.IDEMPOTENCY_RETENTION ?? '24 hours';
+const window = process.env['IDEMPOTENCY_RETENTION'] ?? '24 hours';
 const pool = createOwnerPool({ max: 2 });
 
 try {
