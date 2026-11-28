@@ -21,10 +21,10 @@ const pool = createAppPool({ max: 2 });
 
 try {
     await assertBoundByRowLevelSecurity(pool);
-    const store = createStore(pool, parseStrategy(process.env.CONCURRENCY_STRATEGY));
+    const store = createStore(pool, parseStrategy(process.env['CONCURRENCY_STRATEGY']));
     const findings = await reconcileAll(pool, store, {
-        policy: parsePolicy(process.env.OVERSELL_POLICY),
-        ...(process.env.HOLD_SWEEP_LOOKBACK && { lookback: process.env.HOLD_SWEEP_LOOKBACK }),
+        policy: parsePolicy(process.env['OVERSELL_POLICY']),
+        ...(process.env['HOLD_SWEEP_LOOKBACK'] && { lookback: process.env['HOLD_SWEEP_LOOKBACK'] }),
     });
 
     for (const finding of findings) console.log(JSON.stringify(finding));

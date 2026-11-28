@@ -368,11 +368,13 @@ within a time limit, which `scripts/workflows.test.ts` holds.
 
 </details>
 
-1. Install the demo's dependencies, and Chromium for the browser tests the first time.
+1. Install the service's dependencies and the demo's, and Chromium for the browser tests the first
+   time. The demo runs the service's code from `src`, which it reads through the root tsconfig, and
+   that tsconfig extends the shared config package installed at the root.
 
     ```bash
+    npm ci && npm ci --prefix demo
     cd demo
-    npm ci
     npx playwright install chromium
     ```
 

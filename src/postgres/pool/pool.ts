@@ -14,10 +14,11 @@ const { Pool } = pg;
  * `docker compose up -d` needs no configuration at all.
  */
 export const ownerConnectionString = (): string =>
-    process.env.DATABASE_URL ?? 'postgres://reservations:reservations@localhost:5432/reservations';
+    process.env['DATABASE_URL'] ??
+    'postgres://reservations:reservations@localhost:5432/reservations';
 
 export const appConnectionString = (): string =>
-    process.env.APP_DATABASE_URL ??
+    process.env['APP_DATABASE_URL'] ??
     'postgres://reservations_app:reservations_app@localhost:5432/reservations';
 
 /**

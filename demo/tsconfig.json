@@ -1,23 +1,7 @@
 {
-    "compilerOptions": {
-        "target": "ES2023",
-        "lib": ["ES2023", "DOM", "DOM.Iterable"],
-        "module": "ESNext",
-        "moduleResolution": "bundler",
-        "jsx": "react-jsx",
-        "types": ["vite/client"],
-        "strict": true,
-        "noUncheckedIndexedAccess": true,
-        "exactOptionalPropertyTypes": true,
-        "noImplicitOverride": true,
-        "noFallthroughCasesInSwitch": true,
-        "noUnusedLocals": true,
-        "noUnusedParameters": true,
-        "verbatimModuleSyntax": true,
-        "isolatedModules": true,
-        "skipLibCheck": true,
-        "noEmit": true,
-        "resolveJsonModule": true
-    },
-    "include": ["src"]
+    // The demo's two programs: its pages, which run in a browser, and the files that run in Node
+    // around them (the Vite and Playwright configs and the browser tests). Named here so the
+    // lint's project service finds the program that holds each file.
+    "files": [],
+    "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
 }

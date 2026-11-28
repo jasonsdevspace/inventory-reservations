@@ -136,7 +136,16 @@ jobs:
               with:
                   node-version-file: .nvmrc
                   cache: 'npm'
-                  cache-dependency-path: demo/package-lock.json
+                  cache-dependency-path: |
+                      package-lock.json
+                      demo/package-lock.json
+
+            # The demo runs the service's own code from src, which its tests and build read
+            # through the root tsconfig, and that tsconfig extends the shared config package
+            # installed at the root.
+            - name: Install the service's dependencies
+              working-directory: .
+              run: npm ci --ignore-scripts
 
             - name: Install dependencies
               run: npm ci --ignore-scripts

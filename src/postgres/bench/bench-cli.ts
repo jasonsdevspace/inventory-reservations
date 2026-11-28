@@ -19,13 +19,13 @@ import { type BenchReport, renderReport } from './report.js';
  */
 
 const OWNER_URL =
-    process.env.BENCH_DATABASE_URL ??
+    process.env['BENCH_DATABASE_URL'] ??
     'postgres://reservations:reservations@localhost:5432/reservations_bench';
 const APP_URL =
-    process.env.BENCH_APP_DATABASE_URL ??
+    process.env['BENCH_APP_DATABASE_URL'] ??
     'postgres://reservations_app:reservations_app@localhost:5432/reservations_bench';
-const OUTPUT = process.env.BENCH_OUTPUT ?? 'docs/benchmarks/results.json';
-const ORDERS = Number(process.env.BENCH_ORDERS ?? 600);
+const OUTPUT = process.env['BENCH_OUTPUT'] ?? 'docs/benchmarks/results.json';
+const ORDERS = Number(process.env['BENCH_ORDERS'] ?? 600);
 const CONCURRENCY = [1, 2, 4, 8, 16, 32];
 /**
  * Each scenario runs this many times and the median run is reported, by
@@ -70,7 +70,7 @@ const owner = createOwnerPool({ connectionString: OWNER_URL, max: 2 });
 const app = createAppPool({ connectionString: APP_URL, max: Math.max(...CONCURRENCY) + 4 });
 
 try {
-    await migrate(owner, { appPassword: process.env.APP_DB_PASSWORD ?? 'reservations_app' });
+    await migrate(owner, { appPassword: process.env['APP_DB_PASSWORD'] ?? 'reservations_app' });
     const bench = await createBench({ app, owner, runId: Date.now().toString(36) });
 
     // Opens every connection before timing anything, so connection setup is

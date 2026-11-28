@@ -116,10 +116,10 @@ describe('the rules, enforced by Postgres in the page', () => {
     it('refuses to edit the ledger, as the service and even as the owner', async () => {
         expect(
             await failure(demo.app.query('update reservations set quantity = -99'))
-        ).toMatchObject({ message: expect.stringMatching(/permission denied/) });
+        ).toHaveProperty('message', expect.stringMatching(/permission denied/));
         expect(
             await failure(demo.owner.query('update reservations set quantity = -99'))
-        ).toMatchObject({ message: expect.stringMatching(/append only/) });
+        ).toHaveProperty('message', expect.stringMatching(/append only/));
     });
 
     it('lets reconciliation find a bad entry written by hand, and clear once it is compensated', async () => {

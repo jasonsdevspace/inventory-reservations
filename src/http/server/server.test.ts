@@ -226,7 +226,7 @@ describe('shipping and canceling', () => {
         const ship = await post('/orders/o-1/shipments', { sku, quantity: 5 });
 
         expect(ship.statusCode).toBe(409);
-        expect(ship.json().error.kind).toBe('exceeds_commitment');
+        expect(ship.json<{ error: { kind: string } }>().error.kind).toBe('exceeds_commitment');
     });
 });
 
@@ -424,7 +424,7 @@ describe('tenancy', () => {
         const ship = await post('/orders/o-1/shipments', { sku, quantity: 4 }, otherApiKey);
 
         expect(ship.statusCode).toBe(409);
-        expect(ship.json().error.kind).toBe('exceeds_commitment');
+        expect(ship.json<{ error: { kind: string } }>().error.kind).toBe('exceeds_commitment');
     });
 
     it('scopes idempotency keys per merchant', async () => {
@@ -595,7 +595,7 @@ describe('checkout holds', () => {
             merchantId,
         ]);
         const response = await hold(1);
-        const [placed] = response.json().entries as { at: string; expiresAt: string }[];
+        const [placed] = response.json<{ entries: { at: string; expiresAt: string }[] }>().entries;
         expect(Date.parse(placed?.expiresAt ?? '') - Date.parse(placed?.at ?? '')).toBe(120_000);
     });
 
@@ -664,8 +664,10 @@ describe('checkout holds', () => {
         const response = await post('/holds/h-1/extensions', { sku });
         expect(response.statusCode).toBe(201);
 
-        const before = (placed.json().entries as { expiresAt: string }[])[0]?.expiresAt ?? '';
-        const renewed = response.json().entries as { reason: string; expiresAt?: string }[];
+        const before =
+            placed.json<{ entries: { expiresAt: string }[] }>().entries[0]?.expiresAt ?? '';
+        const renewed = response.json<{ entries: { reason: string; expiresAt?: string }[] }>()
+            .entries;
         expect(renewed.map((entry) => entry.reason)).toEqual(['hold_renewed', 'hold_placed']);
         expect(Date.parse(renewed[1]?.expiresAt ?? '')).toBeGreaterThan(Date.parse(before));
     });

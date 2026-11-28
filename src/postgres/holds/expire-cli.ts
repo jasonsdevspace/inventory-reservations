@@ -17,9 +17,9 @@ try {
     // The same guard as the service, since the job writes through the same
     // policies and must not run as a role that bypasses them.
     await assertBoundByRowLevelSecurity(pool);
-    const store = createStore(pool, parseStrategy(process.env.CONCURRENCY_STRATEGY));
+    const store = createStore(pool, parseStrategy(process.env['CONCURRENCY_STRATEGY']));
     const { expired, deferred } = await expireDueHolds(pool, store, {
-        ...(process.env.HOLD_SWEEP_LOOKBACK && { lookback: process.env.HOLD_SWEEP_LOOKBACK }),
+        ...(process.env['HOLD_SWEEP_LOOKBACK'] && { lookback: process.env['HOLD_SWEEP_LOOKBACK'] }),
     });
     console.log(`expired ${expired} holds, ${deferred} SKUs deferred to the next run`);
 } finally {
